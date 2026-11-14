@@ -34,17 +34,7 @@ El sistema implementa el ciclo comercial central de una casa de subastas mediant
 
 ---
 
-## 3. Equipo y Módulos de Responsabilidad
 
-| Integrante | Rama | Módulo / Archivos de Propiedad |
-|---|---|---|
-| **Jonathan** | `jonathan` | Base monolítica, `server.ts`, esquema y migraciones Prisma (`prisma/*`), singleton `prisma.ts`, gestión de archivos privados (`src/lib/uploads.ts`, `/api/files`), auditoría (`src/lib/audit.ts`, `/api/audit`), Docker y documentación. |
-| **Christian** | `christian` | Autenticación, sesiones (`src/lib/auth/session.ts`), roles, guards CSRF/origen (`guards.ts`), cifrado de cédula (`crypto.ts`), registro, recuperación de contraseña y administración de usuarios. |
-| **Leonel** | `leonel` | Componentes de UI compartidos (`src/components/ui/*`), encabezado global (`Header.tsx`), estilos (`globals.css`), catálogo público y CRUD de artículos (`/mis-articulos`, `/api/articles`). |
-| **Antony** | `antony` | Bandeja de verificación de artículos, asignación y dictamen técnico (`/verificacion`), ciclo comercial de subastas (`/admin/subastas`, `/subastas`, `/api/auctions`). |
-| **Kevin** | `kevin` | Servidor y handlers Socket.IO (`src/server/socket/*`), ofertas en tiempo real (`AuctionBidPanel.tsx`), sala de chat (`/chat`), notificaciones internas y concurrencia de pujas. |
-
----
 
 ## 4. Requisitos Previos
 
