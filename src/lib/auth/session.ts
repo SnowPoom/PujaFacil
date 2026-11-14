@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { parseCookie, stringifySetCookie } from "cookie";
 import type { AccountStatus, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { hasValidRoles } from "@/lib/auth/roles";
 
 export type SessionUser = { id: string; nombreCompleto: string; email: string; status: AccountStatus; roles: Role[] };
 export const SESSION_COOKIE_NAME = "pf_session";
@@ -26,9 +27,15 @@ export async function getUserFromCookieHeader(cookieHeader?: string): Promise<Se
   if (!session || session.expiresAt <= new Date()) return null;
   const { user } = session;
   if (user.status === "SUSPENDIDA" || user.status === "CERRADA") return null;
-  return { ...user, roles: user.roles.map(({ role }) => role) };
+  const roles = user.roles.map(({ role }) => role);
+  if (!hasValidRoles(roles)) return null;
+  return { ...user, roles };
 }
 export async function createUserSession(userId: string): Promise<{ rawToken: string; expiresAt: Date }> {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { roles: { select: { role: true } } } });
+  if (!user || !hasValidRoles(user.roles.map(({ role }) => role))) {
+    throw new Error("No se puede crear una sesión para una cuenta con roles inválidos.");
+  }
   const rawToken = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   await prisma.session.create({ data: { userId, tokenHash: hashToken(rawToken), expiresAt } });

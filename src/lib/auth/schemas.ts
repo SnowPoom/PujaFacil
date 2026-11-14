@@ -1,9 +1,16 @@
 import { z } from "zod";
 
-const email = z.email("Ingresa un correo válido.").trim().toLowerCase().max(254);
+const email = z.string().trim().toLowerCase().max(254).pipe(z.email("Ingresa un correo válido."));
 export const passwordSchema = z.string().min(15, "Usa al menos 15 caracteres.").max(64, "Usa como máximo 64 caracteres.").refine(
-  (value) => !/123456|password|qwerty|contraseña|contrasena|letmein|abcdefgh/i.test(value),
-  "Elige una contraseña que no sea común.",
+  (value) => {
+    // Solo se normaliza para detectar patrones débiles, nunca para guardar/verificar la clave.
+    const normalized = value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/[\s\p{P}\p{S}]/gu, "");
+    return normalized.length > 0
+      && !/123456|654321|987654|password|qwerty|contrasena|letmein|abcdefgh|asdfgh|zxcvbn/.test(normalized)
+      && !/^(.{1,8})\1+$/u.test(normalized)
+      && !/^(?:admin(?:istrador|istrator)?|welcome|bienvenido|iloveyou|changeme|pujafacil)\d*$/.test(normalized);
+  },
+  "Evita contraseñas comunes, secuencias y patrones repetidos.",
 );
 
 export const registerSchema = z.object({

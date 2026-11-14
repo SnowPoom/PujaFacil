@@ -7,9 +7,11 @@ vi.mock("../lib/prisma", () => ({ prisma: db }));
 const requestCookies = vi.hoisted(() => vi.fn());
 vi.mock("next/headers", () => ({ cookies: requestCookies }));
 import { encryptCedula, decryptCedula } from "../lib/auth/crypto";
-import { loginSchema, registerSchema, passwordSchema } from "../lib/auth/schemas";
+import { loginSchema, registerSchema, passwordSchema, forgotSchema } from "../lib/auth/schemas";
 import { createUserSession, deleteSessionFromRawToken, getUserFromCookieHeader, hashToken, sessionCookie } from "../lib/auth/session";
-import { assertTrustedOrigin, canAccessResource, requireActive, requireRole, requireSession } from "../lib/auth/guards";
+import { assertTrustedOrigin, canAccessResource, hasRole, requireActive, requireRole, requireSession } from "../lib/auth/guards";
+import { hasValidRoles } from "../lib/auth/roles";
+import type { Role } from "@prisma/client";
 import { POST as login } from "../app/api/auth/login/route";
 import { POST as logout } from "../app/api/auth/logout/route";
 import { GET as me } from "../app/api/auth/me/route";
@@ -21,6 +23,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.stubEnv("ENCRYPTION_KEY_HEX", "ab".repeat(32));
   db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 60_000), user });
+  db.user.findUnique.mockResolvedValue(user);
   requestCookies.mockResolvedValue({ toString: () => "" });
 });
 afterEach(() => vi.useRealTimers());
@@ -180,10 +183,12 @@ describe("Christian C0 — autenticación", () => {
     db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 60_000), user: { ...user, status: "SUSPENDIDA" } });
     await expect(requireSession(request())).rejects.toMatchObject({ status: 401 });
   });
-  it("mantiene la autorización por rol y propiedad independiente de la presentación del auditor", async () => {
+  it("rechaza auditor combinado con roles comerciales en sesión, roles y propiedad", async () => {
     db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 60_000), user: { ...user, roles: [{ role: "AUDITOR" }, { role: "COMPRADOR" }] } });
-    expect((await requireRole(request(), ["COMPRADOR"])).id).toBe(user.id);
-    expect((await requireRole(request(), ["AUDITOR"])).id).toBe(user.id);
+    await expect(requireRole(request(), ["COMPRADOR"])).rejects.toMatchObject({ status: 401 });
+    await expect(requireRole(request(), ["AUDITOR"])).rejects.toMatchObject({ status: 401 });
+    expect(hasRole({ ...user, roles: ["AUDITOR", "COMPRADOR"] }, "AUDITOR")).toBe(false);
+    expect(canAccessResource({ ...user, roles: ["AUDITOR", "COMPRADOR"] }, user.id)).toBe(false);
     expect(canAccessResource({ ...user, roles: ["AUDITOR"] }, user.id)).toBe(true);
   });
   it("rechaza Origin null y cross-site aun si Origin coincide, sin confiar en forwarded headers", () => {
@@ -202,6 +207,83 @@ describe("Christian C0 — autenticación", () => {
     expect(() => decryptCedula("invalido")).toThrow();
     vi.stubEnv("ENCRYPTION_KEY_HEX", "clave-invalida");
     expect(() => encryptCedula("1234567890")).toThrow();
+  });
+});
+
+const allRoles: Role[] = ["COMPRADOR", "VENDEDOR", "VERIFICADOR", "ADMIN_SUBASTAS", "AUDITOR"];
+const permittedSets = new Set(["COMPRADOR", "VENDEDOR", "COMPRADOR,VENDEDOR", "VERIFICADOR", "ADMIN_SUBASTAS", "AUDITOR"]);
+const roleCases = Array.from({ length: 32 }, (_, mask) => {
+  const roles = allRoles.filter((_, index) => mask & (1 << index));
+  return { roles, permitted: permittedSets.has([...roles].sort().join(",")) };
+});
+
+describe("Christian C0 — exclusividad de roles 1B", () => {
+  it.each(roleCases)("valida el conjunto $roles (permitido: $permitted)", async ({ roles, permitted }) => {
+    expect(hasValidRoles(roles)).toBe(permitted);
+    const account = { ...user, roles: roles.map((role) => ({ role })) };
+    db.user.findUnique.mockResolvedValue(account);
+    db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 60_000), user: account });
+    if (permitted) {
+      expect((await requireSession(request())).roles).toEqual(roles);
+      for (const role of roles) expect((await requireRole(request(), [role])).id).toBe(user.id);
+      await createUserSession(user.id);
+      expect(db.session.create).toHaveBeenCalledOnce();
+    } else {
+      expect(await getUserFromCookieHeader(`pf_session=${token}`)).toBeNull();
+      await expect(requireSession(request())).rejects.toMatchObject({ status: 401 });
+      await expect(requireActive(request())).rejects.toMatchObject({ status: 401 });
+      await expect(requireRole(request(), allRoles)).rejects.toMatchObject({ status: 401 });
+      await expect(createUserSession(user.id)).rejects.toThrow("roles inválidos");
+      expect(db.session.create).not.toHaveBeenCalled();
+    }
+  });
+  it("rechaza también roles repetidos y desconocidos", () => {
+    expect(hasValidRoles(["COMPRADOR", "COMPRADOR"])).toBe(false);
+    expect(hasValidRoles(["DESCONOCIDO" as Role])).toBe(false);
+  });
+  it("login no emite cookie ni crea sesión con perfiles incompatibles", async () => {
+    const password = "Mi frase ficticia segura 2026!";
+    db.user.findUnique.mockResolvedValue({ ...user, passwordHash: await bcrypt.hash(password, 4), roles: [{ role: "ADMIN_SUBASTAS" }, { role: "VENDEDOR" }] });
+    const response = await login(new Request("http://localhost:3000/api/auth/login", { method: "POST", headers: { origin: "http://localhost:3000" }, body: JSON.stringify({ email: user.email, password }) }));
+    expect(response.status).toBe(403);
+    expect(response.headers.has("set-cookie")).toBe(false);
+    expect(await response.json()).toMatchObject({ ok: false, error: { code: "ROLES_INVALIDOS" } });
+    expect(db.session.create).not.toHaveBeenCalled();
+  });
+  it("invalida el acceso de una sesión existente al asignar un rol incompatible", async () => {
+    expect((await requireRole(request(), ["COMPRADOR"])).id).toBe(user.id);
+    db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 60_000), user: { ...user, roles: [{ role: "COMPRADOR" }, { role: "VERIFICADOR" }] } });
+    expect((await me(request())).status).toBe(401);
+    await expect(requireRole(request(), ["VERIFICADOR"])).rejects.toMatchObject({ status: 401 });
+  });
+});
+
+describe("Christian C0 — normalización y contraseñas", () => {
+  it("normaliza espacios y mayúsculas antes de validar email en los esquemas existentes", () => {
+    const email = "  Demo@Example.test  ";
+    expect(loginSchema.parse({ email, password: "clave-existente" }).email).toBe("demo@example.test");
+    expect(forgotSchema.parse({ email }).email).toBe("demo@example.test");
+    expect(registerSchema.parse({ nombreCompleto: "Cuenta Ficticia", email, password: "Mi frase ficticia segura 2026!", cedula: "1234567890", roles: ["COMPRADOR", "VENDEDOR"] }).email).toBe("demo@example.test");
+    expect(loginSchema.safeParse({ email: "demo @example.test", password: "clave" }).success).toBe(false);
+  });
+  it("login usa el correo normalizado sin modificar la contraseña existente", async () => {
+    const password = " Clave existente de prueba ";
+    db.user.findUnique.mockResolvedValue({ ...user, passwordHash: await bcrypt.hash(password, 4) });
+    const response = await login(new Request("http://localhost:3000/api/auth/login", { method: "POST", headers: { origin: "http://localhost:3000" }, body: JSON.stringify({ email: "  Demo@Example.test  ", password }) }));
+    expect(response.status).toBe(200);
+    expect(db.user.findUnique.mock.calls[0][0].where).toEqual({ email: "demo@example.test" });
+  });
+  it.each(["a".repeat(20), "Ab".repeat(10), "1234".repeat(5), "98765432109876543210", "P a s s w o r d 2026!", "Administrador2026!", "adminadminadmin", "--------------------", "QwertyQwertyQwerty"])('rechaza una clave común o patrón débil: %s', (password) => {
+    expect(passwordSchema.safeParse(password).success).toBe(false);
+  });
+  it("conserva longitud 15–64 y acepta frases sin exigir combinaciones de caracteres", () => {
+    const minimum = "v7Mx2Rq9Hs4Lp8N";
+    const maximum = "Una frase con palabras distintas que puedo recordar".padEnd(64, "x");
+    expect(passwordSchema.parse(minimum)).toBe(minimum);
+    expect(passwordSchema.parse(maximum)).toBe(maximum);
+    expect(passwordSchema.parse("una frase larga con palabras variadas")).toBe("una frase larga con palabras variadas");
+    expect(passwordSchema.safeParse(minimum.slice(1)).success).toBe(false);
+    expect(passwordSchema.safeParse(maximum + "x").success).toBe(false);
   });
 });
 

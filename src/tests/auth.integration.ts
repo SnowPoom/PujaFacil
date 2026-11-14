@@ -3,12 +3,12 @@
  * Crea y elimina únicamente sus propias cuentas ficticias.
  */
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { encryptCedula, decryptCedula } from "@/lib/auth/crypto";
 import { requireActive, requireRole } from "@/lib/auth/guards";
-import { getUserFromCookieHeader } from "@/lib/auth/session";
+import { createUserSession, getUserFromCookieHeader } from "@/lib/auth/session";
 import type { Role } from "@prisma/client";
 
 const origin = "http://localhost:3000";
@@ -49,10 +49,16 @@ async function main() {
     const passwordHash = await bcrypt.hash(password, 12);
     const users = [];
     for (const fixture of [
-      { status: "ACTIVA", roles: ["COMPRADOR", "VENDEDOR"] },
-      { status: "PENDIENTE", roles: ["COMPRADOR", "VENDEDOR"] },
-      { status: "ACTIVA", roles: ["AUDITOR"] },
-      { status: "ACTIVA", roles: ["AUDITOR", "COMPRADOR", "VENDEDOR", "ADMIN_SUBASTAS", "VERIFICADOR"] },
+      { status: "ACTIVA", roles: ["COMPRADOR"], permitted: true },
+      { status: "ACTIVA", roles: ["VENDEDOR"], permitted: true },
+      { status: "ACTIVA", roles: ["COMPRADOR", "VENDEDOR"], permitted: true },
+      { status: "PENDIENTE", roles: ["COMPRADOR", "VENDEDOR"], permitted: true },
+      { status: "ACTIVA", roles: ["AUDITOR"], permitted: true },
+      { status: "ACTIVA", roles: ["VERIFICADOR"], permitted: true },
+      { status: "ACTIVA", roles: ["ADMIN_SUBASTAS"], permitted: true },
+      { status: "ACTIVA", roles: ["AUDITOR", "COMPRADOR"], permitted: false },
+      { status: "ACTIVA", roles: ["VERIFICADOR", "VENDEDOR"], permitted: false },
+      { status: "ACTIVA", roles: ["ADMIN_SUBASTAS", "AUDITOR"], permitted: false },
     ] as const) {
       const email = `auth-c0-${randomUUID()}@example.test`;
       fixtureEmails.push(email); // Antes del INSERT, para limpiar incluso si se pierde su respuesta.
@@ -61,7 +67,7 @@ async function main() {
         cedulaCifrada: encryptCedula("1234567890"), status: fixture.status,
         roles: { create: fixture.roles.map((role: Role) => ({ role })) },
       }, include: { roles: true } });
-      created.push(user.id); users.push(user);
+      created.push(user.id); users.push({ ...user, permitted: fixture.permitted });
       assert.notEqual(user.cedulaCifrada, "1234567890");
       assert.equal(decryptCedula(user.cedulaCifrada), "1234567890");
     }
@@ -75,7 +81,23 @@ async function main() {
     for (const user of users) {
       phase = `login/panel/guards ${user.status} ${user.roles.map(({ role }) => role).join("+")}`;
       const start = Date.now();
-      const response = await post("/api/auth/login", { email: user.email, password });
+      const response = await post("/api/auth/login", { email: `  ${user.email.toUpperCase()}  `, password });
+      if (!user.permitted) {
+        assert.equal(response.status, 403);
+        assert.equal(response.headers.has("set-cookie"), false);
+        assert.equal(await prisma.session.count({ where: { userId: user.id } }), 0);
+        await assert.rejects(() => createUserSession(user.id));
+        // Simular una sesión anterior a la restricción, insertada solo para este fixture.
+        const oldToken = randomBytes(32).toString("hex");
+        await prisma.session.create({ data: { userId: user.id, tokenHash: createHash("sha256").update(oldToken).digest("hex"), expiresAt: new Date(Date.now() + 60_000) } });
+        const credential = `pf_session=${oldToken}`;
+        assert.equal(await getUserFromCookieHeader(credential), null);
+        assert.equal((await get("/api/auth/me", credential)).status, 401);
+        await assert.rejects(() => requireActive(new Request(`${origin}/api/test`, { headers: { Cookie: credential } })), { status: 401 });
+        await assertPanelRedirect(credential);
+        console.log(`PASS combinación prohibida ${user.roles.map(({ role }) => role).join("+")}: login sin cookie/sesión y sesión anterior rechazada.`);
+        continue;
+      }
       assert.equal(response.status, 200);
       const cookie = response.headers.get("set-cookie")!;
       for (const flag of ["HttpOnly", "SameSite=Lax", "Path=/"]) assert.ok(cookie.includes(flag));
@@ -94,6 +116,7 @@ async function main() {
       assertPrivate(body, secrets);
       const payload = JSON.parse(body);
       assert.deepEqual(Object.keys(payload.data.user).sort(), ["email", "id", "nombreCompleto", "roles", "status"]);
+      assert.equal(payload.data.user.email, user.email);
       const me = await fetch(`${origin}/api/auth/me`, { headers: { Cookie: credential } });
       assert.equal(me.status, 200);
       const meBody = await me.text();
@@ -106,7 +129,12 @@ async function main() {
       const nav = html.match(/<nav\b[^>]*aria-label="Operaciones de mi cuenta"[^>]*>([\s\S]*?)<\/nav>/)?.[1] ?? "";
       const links = [...nav.matchAll(/href="([^"]+)"/g)].map((match) => match[1]);
       const roles = user.roles.map(({ role }) => role);
-      const expectedLinks = user.status === "PENDIENTE" ? [] : roles.includes("AUDITOR") ? ["/auditoria"] : ["/mis-articulos", "/subastas", "/chat"];
+      const expectedLinks = user.status === "PENDIENTE" ? [] : roles.includes("AUDITOR") ? ["/auditoria"] : [
+        ...(roles.includes("VENDEDOR") ? ["/mis-articulos"] : []),
+        ...(roles.includes("COMPRADOR") ? ["/subastas"] : []),
+        ...(roles.includes("VERIFICADOR") ? ["/verificacion"] : []),
+        ...(roles.includes("ADMIN_SUBASTAS") ? ["/admin"] : []), "/chat",
+      ];
       assert.deepEqual(links.sort(), expectedLinks.sort());
       const guardRequest = new Request(`${origin}/api/test`, { headers: { Cookie: credential } });
       if (user.status === "PENDIENTE") await assert.rejects(() => requireActive(guardRequest), { status: 403 });
@@ -115,6 +143,19 @@ async function main() {
         for (const role of roles) assert.equal((await requireRole(guardRequest, [role])).id, user.id);
       }
       if (!roles.includes("ADMIN_SUBASTAS")) await assert.rejects(() => requireRole(guardRequest, ["ADMIN_SUBASTAS"]), { status: 403 });
+      phase = `cambio a combinación incompatible ${roles.join("+")}`;
+      const incompatibleRole: Role = roles.includes("COMPRADOR") || roles.includes("VENDEDOR") ? "AUDITOR" : "COMPRADOR";
+      const addedRole = await prisma.userRole.create({ data: { userId: user.id, role: incompatibleRole } });
+      assert.equal((await get("/api/auth/me", credential)).status, 401);
+      assert.equal(await getUserFromCookieHeader(credential), null);
+      await assert.rejects(() => requireRole(guardRequest, roles), { status: 401 });
+      await assertPanelRedirect(credential);
+      const inconsistentLogin = await post("/api/auth/login", { email: user.email, password });
+      assert.equal(inconsistentLogin.status, 403);
+      assert.equal(inconsistentLogin.headers.has("set-cookie"), false);
+      assert.equal(await prisma.session.count({ where: { userId: user.id } }), 1);
+      await prisma.userRole.delete({ where: { id: addedRole.id } });
+      assert.equal((await get("/api/auth/me", credential)).status, 200);
       phase = `caducidad/revocación ${user.status} ${roles.join("+")}`;
       await prisma.session.update({ where: { id: stored.id }, data: { expiresAt: new Date(0) } });
       assert.equal(await getUserFromCookieHeader(credential), null);

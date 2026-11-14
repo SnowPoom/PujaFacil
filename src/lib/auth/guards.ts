@@ -1,5 +1,6 @@
 import type { Role } from "@prisma/client";
 import { getUserFromCookieHeader, type SessionUser } from "@/lib/auth/session";
+import { hasValidRoles } from "@/lib/auth/roles";
 
 export class AuthError extends Error {
   constructor(public readonly status: 401 | 403, public readonly code: string, message: string) {
@@ -23,10 +24,10 @@ export async function requireRole(request: Request, roles: Role[]): Promise<Sess
   return user;
 }
 export function hasRole(user: SessionUser | null, role: Role): boolean {
-  return Boolean(user?.roles.includes(role));
+  return Boolean(user && hasValidRoles(user.roles) && user.roles.includes(role));
 }
 export function canAccessResource(user: SessionUser | null, ownerId: string): boolean {
-  return Boolean(user && user.id === ownerId);
+  return Boolean(user && hasValidRoles(user.roles) && user.id === ownerId);
 }
 export function assertTrustedOrigin(request: Request): void {
   const origin = request.headers.get("origin");
