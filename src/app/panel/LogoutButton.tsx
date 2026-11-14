@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Button from "@/components/ui/Button";
 
 export default function LogoutButton() {
   const router = useRouter();
@@ -17,5 +18,5 @@ export default function LogoutButton() {
     } catch { setError("No se pudo conectar. Inténtalo de nuevo."); }
     finally { setPending(false); }
   }
-  return <div><button type="button" className="pf-btn-secondary" disabled={pending} onClick={logout}>{pending ? "Cerrando sesión…" : "Cerrar sesión"}</button>{error && <p role="alert" className="pf-error">{error}</p>}</div>;
+  return <div><Button type="button" variant="secondary" disabled={pending} onClick={logout}>{pending ? "Cerrando sesión…" : "Cerrar sesión"}</Button>{error && <p role="alert" className="pf-error">{error}</p>}</div>;
 }

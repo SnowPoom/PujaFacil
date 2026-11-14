@@ -3,6 +3,8 @@ import Link from "next/link";
 import { requireCurrentUser } from "@/lib/auth/server";
 import { hasRole } from "@/lib/auth/guards";
 import LogoutButton from "./LogoutButton";
+import Card from "@/components/ui/Card";
+import Badge from "@/components/ui/Badge";
 
 export default function PanelPage() {
   return <main className="pf-page w-full"><Suspense fallback={<p role="status">Cargando tu panel…</p>}><Panel /></Suspense></main>;
@@ -21,11 +23,11 @@ async function Panel() {
     if (user.roles.length > 0) links.push({ href: "/chat", label: "Chat" });
     }
   }
-  return <section className="pf-card space-y-6">
+  return <Card><section className="space-y-6">
     <div><h1 className="text-2xl font-bold">Mi panel</h1><p className="mt-2">Bienvenido, {user.nombreCompleto}.</p></div>
-    <p><span className="pf-badge">{user.status}</span></p>
+    <p><Badge variant={user.status === "ACTIVA" ? "success" : "accent"}>{user.status}</Badge></p>
     {user.status === "PENDIENTE" && <div role="status"><h2 className="font-semibold">Pendiente de aprobación</h2><p className="mt-2">Un administrador debe revisar tu documento ficticio y activar tu cuenta antes de que puedas publicar, ofertar o chatear.</p></div>}
     {links.length > 0 && <nav aria-label="Operaciones de mi cuenta" className="flex flex-wrap gap-3">{links.map((link) => <Link key={link.href} href={link.href} className="pf-btn">{link.label}</Link>)}</nav>}
     <LogoutButton />
-  </section>;
+  </section></Card>;
 }

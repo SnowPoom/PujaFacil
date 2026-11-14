@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { loginSchema } from "@/lib/auth/schemas";
+import Button from "@/components/ui/Button";
 
 export default function LoginForm() {
   const router = useRouter();
@@ -28,6 +29,6 @@ export default function LoginForm() {
     <div><label htmlFor="email" className="pf-label">Correo electrónico</label><input id="email" name="email" type="email" autoComplete="username" maxLength={254} required className="pf-input" /></div>
     <div><label htmlFor="password" className="pf-label">Contraseña</label><input id="password" name="password" type="password" autoComplete="current-password" maxLength={256} required className="pf-input" /></div>
     {error && <p role="alert" className="pf-error">{error}</p>}
-    <button type="submit" disabled={pending} className="pf-btn w-full">{pending ? "Iniciando sesión…" : "Iniciar sesión"}</button>
+    <Button type="submit" disabled={pending} className="w-full">{pending ? "Iniciando sesión…" : "Iniciar sesión"}</Button>
   </form>;
 }

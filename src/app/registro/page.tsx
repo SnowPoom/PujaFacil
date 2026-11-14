@@ -1,8 +1,11 @@
 import Link from "next/link";
+import Card from "@/components/ui/Card";
+import Button from "@/components/ui/Button";
 
 export default function RegisterPage() {
   return <main className="pf-page w-full">
-    <section className="pf-card mx-auto max-w-2xl space-y-6" aria-labelledby="register-title">
+    <Card className="mx-auto max-w-2xl">
+    <section className="space-y-6" aria-labelledby="register-title">
       <Link href="/" className="text-sm font-semibold">PujaFácil</Link>
       <div><h1 id="register-title" className="text-2xl font-bold">Crear una cuenta</h1><p className="mt-2 text-sm">Utiliza únicamente datos y documentos ficticios para esta demostración.</p></div>
       <p role="status" className="pf-error">El registro estará disponible cuando se integre la validación segura de documentos. Por ahora puedes iniciar sesión con una cuenta de demostración existente.</p>
@@ -17,11 +20,12 @@ export default function RegisterPage() {
           <fieldset className="space-y-2"><legend className="pf-label">Perfiles solicitados</legend><label className="flex gap-2"><input type="checkbox" name="roles" value="COMPRADOR" />Comprador</label><label className="flex gap-2"><input type="checkbox" name="roles" value="VENDEDOR" />Vendedor</label></fieldset>
           <div><label htmlFor="identidad" className="pf-label">Documento de identidad ficticio</label><input id="identidad" name="identidad" type="file" required className="pf-input" /></div>
           <label className="flex gap-2 text-sm"><input name="terminos" type="checkbox" required />Acepto utilizar datos ficticios en esta demostración.</label>
-          <button className="pf-btn w-full" type="submit" disabled>Registro pendiente de habilitación</button>
+          <Button className="w-full" type="submit" disabled>Registro pendiente de habilitación</Button>
         </fieldset>
       </form>
       <p id="register-help" className="text-sm">La cuenta se creará pendiente de aprobación y solicitará únicamente perfiles de comprador o vendedor.</p>
       <Link href="/iniciar-sesion" className="pf-btn-secondary">Volver a iniciar sesión</Link>
     </section>
+    </Card>
   </main>;
 }
