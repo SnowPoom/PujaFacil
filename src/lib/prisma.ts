@@ -3,7 +3,6 @@ import { PrismaClient } from "@prisma/client";
 // Instancia singleton de PrismaClient.
 // Evita múltiples conexiones durante el hot-reload de Next.js en modo desarrollo.
 declare global {
-  // eslint-disable-next-line no-var
   var __prisma: PrismaClient | undefined;
 }
 

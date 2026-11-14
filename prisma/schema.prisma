@@ -1,0 +1,253 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  COMPRADOR
+  VENDEDOR
+  VERIFICADOR
+  ADMIN_SUBASTAS
+  AUDITOR
+}
+
+enum AccountStatus {
+  PENDIENTE
+  ACTIVA
+  SUSPENDIDA
+  CERRADA
+}
+
+enum ArticleStatus {
+  BORRADOR
+  PENDIENTE_REVISION
+  REQUIERE_CORRECCIONES
+  APROBADO
+  RECHAZADO
+  ASOCIADO_SUBASTA
+  ARCHIVADO
+}
+
+enum AuctionStatus {
+  BORRADOR
+  PROGRAMADA
+  ACTIVA
+  SUSPENDIDA
+  CERRADA_SIN_OFERTAS
+  ADJUDICADA
+  CANCELADA
+}
+
+enum FileKind {
+  IDENTIDAD
+  FOTO
+  CERTIFICADO
+}
+
+enum ReviewDecision {
+  APROBADO
+  RECHAZADO
+  REQUIERE_CORRECCIONES
+}
+
+model User {
+  id              String          @id @default(cuid())
+  nombreCompleto  String
+  email           String          @unique
+  passwordHash    String
+  cedulaCifrada   String
+  telefono        String?
+  direccion       String?
+  status          AccountStatus   @default(PENDIENTE)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  roles           UserRole[]
+  sessions        Session[]
+  resets          PasswordReset[]
+  files           FileRecord[]
+  articles        Article[]       @relation("ArticleOwner")
+  reviews         Review[]        @relation("VerifierReviews")
+  createdAuctions Auction[]       @relation("AuctionCreator")
+  bids            Bid[]
+  aliases         AuctionAlias[]
+  messages        ChatMessage[]
+  notifications   Notification[]
+  auditEvents     AuditEvent[]    @relation("AuditActor")
+}
+
+model UserRole {
+  id     String @id @default(cuid())
+  userId String
+  role   Role
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([userId, role])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Article {
+  id           String        @id @default(cuid())
+  ownerId      String
+  title        String
+  description  String
+  category     String
+  condition    String
+  provenance   String
+  initialPrice Decimal       @db.Decimal(12, 2)
+  status       ArticleStatus @default(BORRADOR)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  owner        User          @relation("ArticleOwner", fields: [ownerId], references: [id])
+  files        FileRecord[]
+  reviews      Review[]
+  auctions     Auction[]
+
+  @@index([title])
+  @@index([category, status])
+  @@index([ownerId, status])
+}
+
+model FileRecord {
+  id           String   @id @default(cuid())
+  ownerId      String
+  articleId    String?
+  kind         FileKind
+  mimeType     String
+  originalName String
+  storagePath  String
+  size         Int
+  createdAt    DateTime @default(now())
+  owner        User     @relation(fields: [ownerId], references: [id])
+  article      Article? @relation(fields: [articleId], references: [id])
+
+  @@index([articleId, kind])
+}
+
+model Review {
+  id         String          @id @default(cuid())
+  articleId  String
+  verifierId String
+  status     ReviewDecision?
+  comments   String?
+  assignedAt DateTime        @default(now())
+  decidedAt  DateTime?
+  article    Article         @relation(fields: [articleId], references: [id])
+  verifier   User            @relation("VerifierReviews", fields: [verifierId], references: [id])
+
+  @@index([verifierId, status])
+}
+
+model Auction {
+  id            String         @id @default(cuid())
+  articleId     String
+  createdById   String
+  startingPrice Decimal        @db.Decimal(12, 2)
+  minIncrement  Decimal        @db.Decimal(12, 2)
+  opensAt       DateTime
+  closesAt      DateTime
+  status        AuctionStatus  @default(BORRADOR)
+  winnerBidId   String?
+  closedAt      DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  article       Article        @relation(fields: [articleId], references: [id])
+  createdBy     User           @relation("AuctionCreator", fields: [createdById], references: [id])
+  bids          Bid[]
+  aliases       AuctionAlias[]
+  messages      ChatMessage[]
+
+  @@index([status, closesAt])
+  @@index([status, opensAt])
+  @@index([articleId, status])
+}
+
+model Bid {
+  id         String   @id @default(cuid())
+  auctionId  String
+  buyerId    String
+  amount     Decimal  @db.Decimal(12, 2)
+  requestId  String
+  acceptedAt DateTime @default(now())
+  auction    Auction  @relation(fields: [auctionId], references: [id])
+  buyer      User     @relation(fields: [buyerId], references: [id])
+
+  @@unique([auctionId, buyerId, requestId])
+  @@index([auctionId, amount])
+  @@index([buyerId, acceptedAt])
+}
+
+model AuctionAlias {
+  id        String  @id @default(cuid())
+  auctionId String
+  userId    String
+  alias     String
+  auction   Auction @relation(fields: [auctionId], references: [id])
+  user      User    @relation(fields: [userId], references: [id])
+
+  @@unique([auctionId, userId])
+  @@unique([auctionId, alias])
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  room      String
+  authorId  String
+  auctionId String?
+  text      String
+  createdAt DateTime @default(now())
+  author    User     @relation(fields: [authorId], references: [id])
+  auction   Auction? @relation(fields: [auctionId], references: [id])
+
+  @@index([room, createdAt])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  body      String
+  url       String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+}
+
+model AuditEvent {
+  id           String   @id @default(cuid())
+  actorId      String?
+  action       String
+  resourceType String
+  resourceId   String?
+  result       String
+  detail       Json?
+  createdAt    DateTime @default(now())
+  actor        User?    @relation("AuditActor", fields: [actorId], references: [id])
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+}
