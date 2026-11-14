@@ -11,12 +11,15 @@ async function Panel() {
   const user = await requireCurrentUser();
   const links = [];
   if (user.status === "ACTIVA") {
+    // Christian.md (14/11): AUDITOR solo ve el enlace de auditoría en este panel.
+    if (hasRole(user, "AUDITOR")) links.push({ href: "/auditoria", label: "Auditoría" });
+    else {
     if (hasRole(user, "VENDEDOR")) links.push({ href: "/mis-articulos", label: "Mis artículos" });
     if (hasRole(user, "COMPRADOR")) links.push({ href: "/subastas", label: "Subastas" });
     if (hasRole(user, "VERIFICADOR")) links.push({ href: "/verificacion", label: "Verificación" });
     if (hasRole(user, "ADMIN_SUBASTAS")) links.push({ href: "/admin", label: "Administración" });
-    if (hasRole(user, "AUDITOR")) links.push({ href: "/auditoria", label: "Auditoría" });
-    if (user.roles.some((role) => role !== "AUDITOR")) links.push({ href: "/chat", label: "Chat" });
+    if (user.roles.length > 0) links.push({ href: "/chat", label: "Chat" });
+    }
   }
   return <section className="pf-card space-y-6">
     <div><h1 className="text-2xl font-bold">Mi panel</h1><p className="mt-2">Bienvenido, {user.nombreCompleto}.</p></div>

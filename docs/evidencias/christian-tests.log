@@ -1,0 +1,12 @@
+
+> pujafacil@0.1.0 test
+> vitest run
+
+
+ RUN  v5.1.0 C:/Users/ACER/OneDrive/Documentos/EPN/Octavo Semestre/Aplicaciones Web Avanzadas/Primer Bimestre/Proyecto/PujaFacil
+
+
+ Test Files  2 passed (2)
+      Tests  27 passed (27)
+   Start at  15:55:59
+   Duration  1.75s (tests 69%, import 22%, transform 8%, worker 1%)

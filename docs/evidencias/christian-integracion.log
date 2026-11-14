@@ -1,0 +1,7 @@
+PASS /panel sin sesión y con cookie inválida: redirección real al login.
+PASS ACTIVA COMPRADOR+VENDEDOR: login, cookie, hash, privacidad, panel/roles, caducidad y logout/revocación.
+PASS PENDIENTE COMPRADOR+VENDEDOR: login, cookie, hash, privacidad, panel/roles, caducidad y logout/revocación.
+PASS ACTIVA AUDITOR: login, cookie, hash, privacidad, panel/roles, caducidad y logout/revocación.
+PASS ACTIVA AUDITOR+COMPRADOR+VENDEDOR+ADMIN_SUBASTAS+VERIFICADOR: login, cookie, hash, privacidad, panel/roles, caducidad y logout/revocación.
+PASS C0 PostgreSQL: login, cookie HttpOnly, token hasheado, panel, pendiente/roles, CSRF, logout y revocación.
+PASS limpieza: 0 cuentas, sesiones y roles residuales de este run.

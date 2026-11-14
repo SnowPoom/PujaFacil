@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
 
 const db = vi.hoisted(() => ({ user: { findUnique: vi.fn() }, session: { findUnique: vi.fn(), create: vi.fn(), deleteMany: vi.fn() } }));
 vi.mock("../lib/prisma", () => ({ prisma: db }));
+const requestCookies = vi.hoisted(() => vi.fn());
+vi.mock("next/headers", () => ({ cookies: requestCookies }));
 import { encryptCedula, decryptCedula } from "../lib/auth/crypto";
 import { loginSchema, registerSchema, passwordSchema } from "../lib/auth/schemas";
 import { createUserSession, deleteSessionFromRawToken, getUserFromCookieHeader, hashToken, sessionCookie } from "../lib/auth/session";
@@ -10,6 +13,7 @@ import { assertTrustedOrigin, canAccessResource, requireActive, requireRole, req
 import { POST as login } from "../app/api/auth/login/route";
 import { POST as logout } from "../app/api/auth/logout/route";
 import { GET as me } from "../app/api/auth/me/route";
+import { getCurrentUser, requireCurrentUser } from "../lib/auth/server";
 
 const token = "a".repeat(64);
 const user = { id: "ficticio", nombreCompleto: "Cuenta Ficticia", email: "demo@example.test", status: "ACTIVA" as const, roles: [{ role: "COMPRADOR" as const }] };
@@ -17,7 +21,9 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.stubEnv("ENCRYPTION_KEY_HEX", "ab".repeat(32));
   db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 60_000), user });
+  requestCookies.mockResolvedValue({ toString: () => "" });
 });
+afterEach(() => vi.useRealTimers());
 
 describe("Christian C0 — contrato HTTP con DB simulada", () => {
   const password = "Mi frase ficticia segura 2026!";
@@ -100,12 +106,17 @@ describe("Christian C0 — autenticación", () => {
     expect(loginSchema.safeParse({ email: input.email, password: "" }).success).toBe(false);
   });
   it("guarda solo hash SHA-256 y caduca en siete días", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-14T17:00:00Z"));
     db.session.create.mockResolvedValue({});
     const start = Date.now();
     const result = await createUserSession(user.id);
     expect(result.rawToken).toMatch(/^[a-f\d]{64}$/);
-    expect(db.session.create).toHaveBeenCalledWith({ data: { userId: user.id, tokenHash: hashToken(result.rawToken), expiresAt: result.expiresAt } });
-    expect(result.expiresAt.getTime() - start).toBeGreaterThanOrEqual(604_800_000);
+    const expectedHash = createHash("sha256").update(result.rawToken).digest("hex");
+    expect(db.session.create).toHaveBeenCalledWith({ data: { userId: user.id, tokenHash: expectedHash, expiresAt: result.expiresAt } });
+    expect(expectedHash).not.toBe(result.rawToken);
+    expect(result.expiresAt.getTime() - start).toBe(604_800_000);
+    expect(sessionCookie(result.rawToken, result.expiresAt)).toContain(`Expires=${result.expiresAt.toUTCString()}`);
   });
   it("no consulta DB sin cookie y rechaza sesiones vencidas", async () => {
     expect(await getUserFromCookieHeader()).toBeNull();
@@ -141,5 +152,95 @@ describe("Christian C0 — autenticación", () => {
     for (const flag of ["HttpOnly", "Secure", "SameSite=Lax", "Path=/"]) expect(cookie).toContain(flag);
     await deleteSessionFromRawToken(token);
     expect(db.session.deleteMany).toHaveBeenCalledWith({ where: { tokenHash: hashToken(token) } });
+  });
+  it("rechaza una sesión revocada y la cookie malformada sin consultar otra sesión", async () => {
+    db.session.findUnique.mockResolvedValue(null);
+    expect(await getUserFromCookieHeader(`pf_session=${token}`)).toBeNull();
+    await expect(requireSession(request())).rejects.toMatchObject({ status: 401 });
+    db.session.findUnique.mockClear();
+    expect(await getUserFromCookieHeader("pf_session=token-invalido")).toBeNull();
+    expect(db.session.findUnique).not.toHaveBeenCalled();
+  });
+  it("rechaza al llegar exactamente a expiresAt y acepta antes del límite", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const expiresAt = new Date("2026-11-14T17:00:00Z");
+    db.session.findUnique.mockResolvedValue({ expiresAt, user });
+    vi.setSystemTime(expiresAt.getTime() - 1);
+    expect(await getUserFromCookieHeader(`pf_session=${token}`)).not.toBeNull();
+    vi.setSystemTime(expiresAt);
+    await expect(requireSession(request())).rejects.toMatchObject({ status: 401 });
+    expect((await me(request())).status).toBe(401);
+  });
+  it("vuelve a consultar estado y roles, sin conservar privilegios de la sesión anterior", async () => {
+    expect((await requireRole(request(), ["COMPRADOR"])).id).toBe(user.id);
+    db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 60_000), user: { ...user, roles: [{ role: "VENDEDOR" }] } });
+    await expect(requireRole(request(), ["COMPRADOR"])).rejects.toMatchObject({ status: 403 });
+    expect((await requireRole(request(), ["VENDEDOR", "ADMIN_SUBASTAS"])).id).toBe(user.id);
+    await expect(requireRole(request(), [])).rejects.toMatchObject({ status: 403 });
+    db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 60_000), user: { ...user, status: "SUSPENDIDA" } });
+    await expect(requireSession(request())).rejects.toMatchObject({ status: 401 });
+  });
+  it("mantiene la autorización por rol y propiedad independiente de la presentación del auditor", async () => {
+    db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 60_000), user: { ...user, roles: [{ role: "AUDITOR" }, { role: "COMPRADOR" }] } });
+    expect((await requireRole(request(), ["COMPRADOR"])).id).toBe(user.id);
+    expect((await requireRole(request(), ["AUDITOR"])).id).toBe(user.id);
+    expect(canAccessResource({ ...user, roles: ["AUDITOR"] }, user.id)).toBe(true);
+  });
+  it("rechaza Origin null y cross-site aun si Origin coincide, sin confiar en forwarded headers", () => {
+    const cases: Record<string, string>[] = [
+      { origin: "null" },
+      { origin: "http://localhost:3000", "sec-fetch-site": "cross-site" },
+      { origin: "https://otro.test", "x-forwarded-host": "otro.test", "x-forwarded-proto": "https" },
+    ];
+    for (const headers of cases) {
+      expect(() => assertTrustedOrigin(new Request("http://localhost:3000/api/auth/logout", { method: "POST", headers }))).toThrow();
+    }
+  });
+  it("no marca Secure en desarrollo y rechaza claves o ciphertext inválidos", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    expect(sessionCookie(token, new Date())).not.toContain("Secure");
+    expect(() => decryptCedula("invalido")).toThrow();
+    vi.stubEnv("ENCRYPTION_KEY_HEX", "clave-invalida");
+    expect(() => encryptCedula("1234567890")).toThrow();
+  });
+});
+
+describe("Christian C0 — sesión SSR usada por /panel", () => {
+  it("redirige a iniciar-sesion sin cookie válida", async () => {
+    expect(await getCurrentUser()).toBeNull();
+    await expect(requireCurrentUser()).rejects.toMatchObject({ digest: "NEXT_REDIRECT;replace;/iniciar-sesion;307;" });
+  });
+  it("permite SSR pendiente y redirige si la sesión ya está revocada", async () => {
+    requestCookies.mockResolvedValue({ toString: () => `pf_session=${token}` });
+    db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 60_000), user: { ...user, status: "PENDIENTE" } });
+    expect((await requireCurrentUser()).status).toBe("PENDIENTE");
+    db.session.findUnique.mockResolvedValue(null);
+    await expect(requireCurrentUser()).rejects.toMatchObject({ digest: "NEXT_REDIRECT;replace;/iniciar-sesion;307;" });
+  });
+});
+
+describe("Christian C0 — privacidad de respuestas HTTP", () => {
+  it("no incluye token ni credenciales en JSON de login/me y limita el select del usuario", async () => {
+    const password = "Mi frase ficticia segura 2026!";
+    db.user.findUnique.mockResolvedValue({ ...user, passwordHash: await bcrypt.hash(password, 4) });
+    const response = await login(new Request("http://localhost:3000/api/auth/login", {
+      method: "POST", headers: { origin: "http://localhost:3000" }, body: JSON.stringify({ email: user.email, password }),
+    }));
+    const rawToken = response.headers.get("set-cookie")!.split(";")[0].split("=")[1];
+    for (const body of [await response.text(), await (await me(request())).text()]) {
+      for (const secret of [password, rawToken, "passwordHash", "cedulaCifrada", "tokenHash", "telefono", "direccion"]) expect(body).not.toContain(secret);
+    }
+    expect(db.session.findUnique.mock.calls[0][0].select.user.select).toEqual({
+      id: true, nombreCompleto: true, email: true, status: true, roles: { select: { role: true } },
+    });
+  });
+  it("no devuelve ni registra el detalle confidencial de un error de DB", async () => {
+    const secret = "dato-confidencial-ficticio";
+    db.session.findUnique.mockRejectedValue(new Error(secret));
+    const logger = vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await me(request());
+    expect(response.status).toBe(500);
+    expect(await response.text()).not.toContain(secret);
+    expect(logger).toHaveBeenCalledWith("[auth] No se pudo completar la operación.");
   });
 });
