@@ -62,11 +62,10 @@ Antes de ejecutar el proyecto, asegúrate de contar con:
 
 Sigue estos pasos para poner en marcha el proyecto localmente:
 
-### Paso 1: Clonar el repositorio y posicionarse en la rama
+### Paso 1: Clonar el repositorio
 ```bash
 git clone https://github.com/Jonathan593/PujaFacil.git
 cd PujaFacil
-git switch jonathan
 ```
 
 ### Paso 2: Instalar las dependencias
