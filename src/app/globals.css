@@ -1,0 +1,204 @@
+@import "tailwindcss";
+
+/* ============================================================
+   PujaFácil — Design tokens y clases compartidas
+   Propietario inicial: Jonathan (J0)
+   Tras el primer commit, Leonel es responsable de este archivo.
+   NO agregar estilos globales improvisados después del bootstrap.
+   ============================================================ */
+
+:root {
+  /* Paleta acordada */
+  --pf-bg: #F7F5F1;
+  --pf-surface: #FFFFFF;
+  --pf-text: #1F2933;
+  --pf-primary: #1F3A5F;
+  --pf-primary-hover: #172E4C;
+  --pf-accent: #C6A15B;
+  --pf-border: #DDD9D1;
+  --pf-success: #237A57;
+  --pf-error: #B42318;
+
+  /* Tipografía */
+  --pf-font: Arial, Helvetica, sans-serif;
+
+  /* Forma */
+  --pf-radius: 12px;
+  --pf-max-w: 1200px;
+}
+
+body {
+  background-color: var(--pf-bg);
+  color: var(--pf-text);
+  font-family: var(--pf-font);
+}
+
+/* --- Contenedor principal --- */
+.pf-page {
+  max-width: var(--pf-max-w);
+  margin-inline: auto;
+  padding: 24px;
+}
+
+/* --- Tarjeta --- */
+.pf-card {
+  background-color: var(--pf-surface);
+  border: 1px solid var(--pf-border);
+  border-radius: var(--pf-radius);
+  padding: 24px;
+}
+
+/* --- Botón primario --- */
+.pf-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background-color: var(--pf-primary);
+  color: #FFFFFF;
+  font-family: var(--pf-font);
+  font-weight: 600;
+  font-size: 0.875rem;
+  padding: 10px 20px;
+  border: none;
+  border-radius: var(--pf-radius);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background-color 0.15s ease;
+}
+.pf-btn:hover {
+  background-color: var(--pf-primary-hover);
+}
+.pf-btn:focus-visible {
+  outline: 2px solid var(--pf-accent);
+  outline-offset: 2px;
+}
+.pf-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* --- Botón secundario --- */
+.pf-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background-color: transparent;
+  color: var(--pf-primary);
+  font-family: var(--pf-font);
+  font-weight: 600;
+  font-size: 0.875rem;
+  padding: 10px 20px;
+  border: 1.5px solid var(--pf-primary);
+  border-radius: var(--pf-radius);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.pf-btn-secondary:hover {
+  background-color: var(--pf-primary);
+  color: #FFFFFF;
+}
+.pf-btn-secondary:focus-visible {
+  outline: 2px solid var(--pf-accent);
+  outline-offset: 2px;
+}
+
+/* --- Input de texto --- */
+.pf-input {
+  display: block;
+  width: 100%;
+  padding: 10px 14px;
+  font-family: var(--pf-font);
+  font-size: 0.875rem;
+  color: var(--pf-text);
+  background-color: var(--pf-surface);
+  border: 1.5px solid var(--pf-border);
+  border-radius: var(--pf-radius);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.pf-input:focus-visible {
+  border-color: var(--pf-primary);
+}
+.pf-input::placeholder {
+  color: #9BA3AF;
+}
+
+/* --- Etiqueta de campo --- */
+.pf-label {
+  display: block;
+  font-family: var(--pf-font);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--pf-text);
+  margin-bottom: 6px;
+}
+
+/* --- Tabla --- */
+.pf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.pf-table th {
+  text-align: left;
+  padding: 10px 14px;
+  background-color: var(--pf-bg);
+  border-bottom: 2px solid var(--pf-border);
+  font-weight: 600;
+  color: var(--pf-text);
+}
+.pf-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--pf-border);
+  color: var(--pf-text);
+}
+.pf-table tr:last-child td {
+  border-bottom: none;
+}
+.pf-table tr:hover td {
+  background-color: var(--pf-bg);
+}
+
+/* --- Mensajes de feedback --- */
+.pf-error {
+  color: var(--pf-error);
+  font-size: 0.8125rem;
+  margin-top: 4px;
+}
+
+.pf-success {
+  color: var(--pf-success);
+  font-size: 0.8125rem;
+  margin-top: 4px;
+}
+
+/* --- Badge de estado --- */
+.pf-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 100px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background-color: var(--pf-bg);
+  color: var(--pf-text);
+  border: 1px solid var(--pf-border);
+}
+.pf-badge--success {
+  background-color: #DCFCE7;
+  color: var(--pf-success);
+  border-color: #BBF7D0;
+}
+.pf-badge--error {
+  background-color: #FEE2E2;
+  color: var(--pf-error);
+  border-color: #FECACA;
+}
+.pf-badge--accent {
+  background-color: #FDF3E0;
+  color: #92610D;
+  border-color: #F5D59B;
+}

@@ -1,0 +1,36 @@
+services:
+  db:
+    image: postgres:16
+    container_name: pujafacil_db
+    environment:
+      POSTGRES_DB: pujafacil
+      POSTGRES_USER: pujafacil
+      POSTGRES_PASSWORD: pujafacil_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pujafacil_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pujafacil -d pujafacil"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Servicio web para demo/producción local (descomentar cuando Dockerfile esté listo — Domingo 15)
+  # web:
+  #   build: .
+  #   container_name: pujafacil_web
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     DATABASE_URL: postgresql://pujafacil:pujafacil_dev@db:5432/pujafacil?schema=public
+  #     NODE_ENV: production
+  #     PORT: 3000
+  #     SESSION_COOKIE_NAME: pf_session
+  #     ENCRYPTION_KEY_HEX: ${ENCRYPTION_KEY_HEX}
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+
+volumes:
+  pujafacil_pgdata:
