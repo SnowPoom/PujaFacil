@@ -180,6 +180,7 @@ async function main() {
       const fixtures = await prisma.user.findMany({ where: { email: { in: fixtureEmails } }, select: { id: true } });
       const ids = fixtures.map(({ id }) => id);
       await prisma.$transaction([
+        prisma.auditEvent.deleteMany({ where: { actorId: { in: ids } } }),
         prisma.session.deleteMany({ where: { userId: { in: ids } } }),
         prisma.userRole.deleteMany({ where: { userId: { in: ids } } }),
         prisma.user.deleteMany({ where: { email: { in: fixtureEmails } } }),
