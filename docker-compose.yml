@@ -17,20 +17,20 @@ services:
       retries: 5
 
   # Servicio web para demo/producción local (descomentar cuando Dockerfile esté listo — Domingo 15)
-  # web:
-  #   build: .
-  #   container_name: pujafacil_web
-  #   ports:
-  #     - "3000:3000"
-  #   environment:
-  #     DATABASE_URL: postgresql://pujafacil:pujafacil_dev@db:5432/pujafacil?schema=public
-  #     NODE_ENV: production
-  #     PORT: 3000
-  #     SESSION_COOKIE_NAME: pf_session
-  #     ENCRYPTION_KEY_HEX: ${ENCRYPTION_KEY_HEX}
-  #   depends_on:
-  #     db:
-  #       condition: service_healthy
+  web:
+    build: .
+    container_name: pujafacil_web
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://pujafacil:pujafacil_dev@db:5432/pujafacil?schema=public
+      NODE_ENV: production
+      PORT: 3000
+      SESSION_COOKIE_NAME: pf_session
+      ENCRYPTION_KEY_HEX: ${ENCRYPTION_KEY_HEX}
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   pujafacil_pgdata:

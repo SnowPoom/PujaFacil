@@ -6,7 +6,7 @@ Plataforma monolítica de comercio y subastas en tiempo real diseñada para pequ
 
 ## 1. Alcance del Proyecto (1B)
 
-El sistema implementa el ciclo comercial central de una casa de subastas mediante un **monolito único en Next.js**:
+El alcance previsto del primer bimestre cubre el ciclo comercial central de una casa de subastas mediante un **monolito único en Next.js**:
 - **Registro y Acceso Seguro:** Registro con documento de identidad ficticio, validación en servidor, almacenamiento de contraseñas con hash + sal (`bcryptjs`), sesión mediante cookie `HttpOnly` y recuperación de cuenta con token de un solo uso de caducidad temporal.
 - **Catálogo y CRUD de Artículos:** Publicación de artículos por vendedores activos, subida y validación estricta de fotografías/certificados privados, filtros por categoría y búsqueda paginada.
 - **Verificación Técnica:** Asignación de artículos a verificadores y evaluación de autenticidad antes de su publicación en subasta.
@@ -36,15 +36,24 @@ El sistema implementa el ciclo comercial central de una casa de subastas mediant
 
 
 
+## 3. Responsables
+
+| Integrante | Módulo |
+|---|---|
+| Jonathan | Prisma, archivos privados, auditoría, Docker e integración |
+| Christian | Autenticación, sesiones, roles y cifrado |
+| Leonel | UI compartida, artículos y catálogo |
+| Antony | Verificación y ciclo de subastas |
+| Kevin | Socket.IO, pujas, chat y notificaciones |
+
+El alcance anterior describe el producto 1B. Esta entrega J2 incorpora archivos y auditoría; los módulos comerciales de los demás integrantes se integran en sus hitos. El servidor ya admite HTTPS en el mismo proceso de Socket.IO.
+
 ## 4. Requisitos Previos
 
 Antes de ejecutar el proyecto, asegúrate de contar con:
 1. **Node.js 24 LTS:** Verifica con `node -v` (ejemplo: `v24.22.x`).
 2. **Docker Desktop:** Instalado y en ejecución (el servicio de Docker debe estar activo para levantar la base de datos).
-3. **PowerShell en Windows (Opcional):** Si la ejecución de scripts está restringida al ejecutar `npm`, habilítala con:
-   ```powershell
-   Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-   ```
+3. **PowerShell en Windows:** Usa `npm.cmd` y `npx.cmd` si la política local impide ejecutar los scripts `.ps1`; no hace falta modificar esa política.
 
 ---
 
@@ -59,16 +68,22 @@ cd PujaFacil
 ```
 
 ### Paso 2: Instalar las dependencias
-```bash
-npm ci
+```powershell
+npm.cmd ci
 ```
 
 ### Paso 3: Configurar variables de entorno
 Copia la plantilla de variables de entorno y ajusta los valores locales necesarios:
-```bash
-cp .env.example .env
+```powershell
+Copy-Item .env.example .env
 ```
-> El archivo `.env` local ya incluye los valores por defecto para conectar a la base de datos de Docker Compose y claves seguras de desarrollo. **Nunca agregues el archivo `.env` a Git.**
+Completa `DEMO_PASSWORD` con una contraseña ficticia de demostración y sustituye `ENCRYPTION_KEY_HEX` por una clave generada localmente. La plantilla contiene marcadores, no claves utilizables:
+
+```powershell
+node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+```
+
+Conserva esa clave entre ejecuciones para poder descifrar los registros. **Nunca agregues `.env` a Git.**
 
 ### Paso 4: Levantar la base de datos PostgreSQL
 Inicia el contenedor de base de datos con Docker Compose:
@@ -83,21 +98,21 @@ docker ps --filter "name=pujafacil_db"
 
 ### Paso 5: Aplicar migraciones y generar el cliente Prisma
 Aplica las migraciones pendientes en la base de datos:
-```bash
-npx prisma migrate deploy
-npx prisma generate
+```powershell
+npx.cmd prisma migrate deploy
+npx.cmd prisma generate
 ```
 
 ### Paso 6: Cargar datos iniciales de prueba (Seed)
 Inserta los usuarios de prueba, artículos y subasta demostrativa:
-```bash
-npm run db:seed
+```powershell
+npm.cmd run db:seed
 ```
 
 ### Paso 7: Iniciar el servidor de desarrollo
 Inicia el servidor Node con soporte de recarga en caliente y WebSockets:
-```bash
-npm run dev
+```powershell
+npm.cmd run dev
 ```
 Verás en consola:
 ```text
@@ -125,7 +140,17 @@ Al ejecutar `npm run db:seed`, se generan las siguientes cuentas de prueba:
 | Comprador 2 | `comprador2@pujafacil.test` | `ACTIVA` |
 | Cuenta Pendiente | `pendiente@pujafacil.test` | `PENDIENTE` |
 
-> La contraseña para todas las cuentas de prueba se define en la variable `DEMO_PASSWORD` del archivo `.env` local (por defecto `Demo1234!`).
+La contraseña para las siete cuentas se define exclusivamente en `DEMO_PASSWORD`; no hay contraseña predeterminada. El seed usa bcrypt de coste 12, cifra las cédulas ficticias con AES-256-GCM y utiliza `upsert`. Repetirlo no duplica usuarios, artículos, subasta ni alias; actualiza contraseña, cifrado, rol y estado de las cuentas demo existentes, incluidos los antiguos valores placeholder. No reinicia el estado comercial de artículos o subastas existentes.
+
+Todos los registros creados por el seed utilizan CUID v1. Los usuarios, sus roles y los alias reciben el ID de `@default(cuid())` de Prisma. Los artículos y la subasta utilizan CUID fijos para mantener el seed idempotente:
+
+| Registro | CUID |
+|---|---|
+| Artículo aprobado | `cmwi7cxk10001pf01a1b2c3d4` |
+| Artículo borrador | `cmwi7cxk10002pf01a1b2c3d4` |
+| Subasta | `cmwi7cxk10000pf01a1b2c3d4` |
+
+La sala de la subasta es `auction:cmwi7cxk10000pf01a1b2c3d4`. Al ejecutar `npm.cmd run db:seed`, los antiguos IDs `demo-articulo-aprobado`, `demo-articulo-borrador` y `demo-subasta-programada`, si existen, se convierten dentro de una misma transacción. Las relaciones con archivos, revisiones, subastas, pujas, alias y mensajes se conservan mediante las FK; también se actualiza el nombre de sala en los mensajes. Los archivos físicos no se renombran. Las URL y clientes, incluidos los ejemplos de subida que pasaban `articleId`, deben utilizar los CUID nuevos. Si un registro antiguo y su nuevo ID ya coexisten, se revierte la transacción de artículos y subasta para evitar fusionar o eliminar datos automáticamente.
 
 ---
 
@@ -133,16 +158,18 @@ Al ejecutar `npm run db:seed`, se generan las siguientes cuentas de prueba:
 
 Para comprobar la integridad del proyecto antes de realizar un Pull Request:
 
-```bash
-# 1. Comprobar reglas de estilo y tipado con ESLint:
-npm run lint
+```powershell
+# 1. Comprobar reglas de estilo con ESLint:
+npm.cmd run lint
 
 # 2. Ejecutar pruebas automatizadas con Vitest:
-npm test
+npm.cmd test
 
 # 3. Compilación optimizada para producción:
-npm run build
+npm.cmd run build
 ```
+
+Verificación ejecutada para J2 (15 de noviembre): lint correcto, 152 pruebas aprobadas y build de producción correcto tanto localmente como dentro de Docker. Se ejecutó el seed dos veces sobre PostgreSQL y se verificaron las siete cuentas, hashes bcrypt, descifrado de cédulas ficticias y ausencia de duplicados. Una prueba de integración en el contenedor comprobó subidas, eliminación de EXIF, permisos, borrado protegido y auditoría con la base real; también comprobó HTTPS y conexión Socket.IO con transporte WebSocket seguro en el mismo servidor. Esa comprobación de WSS valida el transporte, no los futuros handlers del chat.
 
 ---
 
@@ -151,8 +178,8 @@ npm run build
 El servidor `server.ts` soporta TLS de forma nativa sin requerir un proxy inverso (Nginx o Caddy). Para activar HTTPS y WebSockets seguros (`wss://`):
 
 1. **Generar certificados locales de desarrollo** (ejemplo con OpenSSL en terminal):
-   ```bash
-   mkdir -p .certs
+   ```powershell
+   New-Item -ItemType Directory -Force .certs
    openssl req -x509 -nodes -newkey rsa:2048 -keyout .certs/dev-key.pem -out .certs/dev-cert.pem -days 7 -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost"
    ```
 2. **Configurar en `.env`:**
@@ -160,23 +187,68 @@ El servidor `server.ts` soporta TLS de forma nativa sin requerir un proxy invers
    HTTPS_KEY_PATH=.certs/dev-key.pem
    HTTPS_CERT_PATH=.certs/dev-cert.pem
    ```
-3. **Reiniciar con `npm run dev`** y abrir `https://localhost:3000/`.
-4. En DevTools → Red (Network) → WS se puede validar la conexión bajo `wss://localhost:3000/socket.io/...`.
+3. **Reiniciar con `npm.cmd run dev`**, abrir `https://localhost:3000/` y confiar explícitamente en el certificado local en el navegador. Si OpenSSL no está disponible, proporciona un par de certificados de desarrollo existente y ajusta las rutas. Para volver a HTTP deja ambas variables vacías; configurar solamente una detiene el servidor.
+4. Con un cliente Socket.IO conectado, abrir DevTools → Red (Network) → WS y comprobar una conexión `wss://localhost:3000/socket.io/...`. Si solo aparece polling, aún no se ha demostrado el transporte WSS. La prueba del chat y su handshake corresponde al módulo de Kevin; esta guía no constituye evidencia de esa prueba.
 
-> **Nota de Seguridad:** La carpeta `.certs/` se encuentra excluida en `.gitignore`. Nunca compartas ni subas claves privadas (`*.pem`) al repositorio.
+`http://localhost` permite WS sin cifrar durante desarrollo. Para acceso público se requieren HTTPS/WSS y certificados válidos. La carpeta `.certs/` está excluida en `.gitignore`: no subas claves privadas, certificados de prueba ni capturas que revelen secretos.
+
+## 9. Archivos privados y auditoría (J2)
+
+`POST /api/files` recibe `multipart/form-data` con `file`, `kind` y `articleId` opcional. Exige sesión activa y cabecera `Origin` de la misma aplicación. El artículo debe pertenecer al usuario; `IDENTIDAD` no se asocia a artículos. El registro inicial de identidad puede consumir `saveValidatedUpload` internamente desde el módulo de autenticación, sin habilitar subidas anónimas.
+
+| Tipo | Formatos reales | Límite | Lectura en `GET /api/files/[id]` |
+|---|---|---|---|
+| `IDENTIDAD` | JPEG, PNG, WebP o PDF | Imagen 10 MB; PDF 20 MB | Titular o `ADMIN_SUBASTAS` |
+| `CERTIFICADO` | PDF | 20 MB | Titular, administrador o verificador asignado |
+| `FOTO` | JPEG, PNG, WebP | 10 MB | Pública para artículo `APROBADO` o `ASOCIADO_SUBASTA`; en otros estados, titular, administrador o verificador asignado |
+
+Los límites se calculan en bytes (1 MB = 1024² bytes). La validación compara magic numbers, extensión y MIME declarado, rechaza vacíos, nombres con rutas y dobles extensiones, y recodifica las imágenes con Sharp para eliminar EXIF y otros metadatos. Un MIME vacío se acepta si el contenido real y la extensión coinciden. Los PDF se validan por tipo y firma `%PDF-`; no existe análisis antivirus. Los binarios se guardan con UUID en `storage/private`, fuera de `public`, con nombre de respuesta neutro `archivo.ext` para evitar PII en nombres enviados por clientes. No se expone `storagePath`; las lecturas usan `private, no-store`.
+
+`deleteFilesForDraft(articleId, ownerId)` exige un borrador propio sin revisiones ni subastas y bloquea el artículo durante la comprobación. Elimina binarios y registros antes de que el módulo de artículos elimine el artículo. Los archivos ya ausentes permiten reintentar. El filesystem y PostgreSQL no comparten una transacción: si un borrado parcial o el commit falla, algunos binarios pueden quedar ausentes aunque el registro persista; el reintento completa la limpieza.
+
+`writeAuditEvent` registra actor interno, acción, recurso, resultado y fecha. Elimina recursivamente campos sensibles; conserva números, booleanos y estados conocidos, y sustituye texto libre por `[REDACTADO]` para impedir PII bajo claves genéricas. Los códigos de acción/recurso/resultado y los identificadores deben ser códigos técnicos, nunca datos personales. Las altas y eliminaciones de archivos registran auditoría en la misma transacción Prisma; un fallo del registro impide devolver éxito.
+
+`GET /api/audit?page=1&pageSize=20&action=ARCHIVO_CREADO` y `/auditoria` son exclusivos de cuentas `AUDITOR` activas. La página ofrece filtro por acción, paginación y tabla con resultados; la API admite de 1 a 100 eventos por página, ordenados por fecha descendente y desempate por ID. No se consultan relaciones de usuarios ni se devuelve la identidad del actor. También se sanitiza `detail` al leer eventos antiguos.
+
+`src/tests/infra.test.ts` cubre firmas reales, límites, EXIF, permisos por tipo/estado/rol, compensación al fallar Prisma o auditoría, borrado protegido, privacidad y contratos HTTP. Las pruebas de infraestructura usan Prisma y disco simulados; no sustituyen las migraciones o pruebas manuales con PostgreSQL.
+
+## 10. Ejecución con Docker
+
+El `Dockerfile` usa Node 24, `npm ci`, generación Prisma y build de Next.js. Arranca `npm run start` con `server.ts`, conservando Socket.IO en el mismo puerto 3000. La imagen usa copias explícitas que excluyen `.env`, certificados y archivos privados, ejecuta como usuario `node` y declara un volumen para `/app/storage/private`.
+
+Con `.env` configurado y Docker Desktop activo:
+
+```powershell
+docker compose up -d db
+docker compose build web
+docker compose run --rm web npx prisma migrate deploy
+docker compose run --rm -e DEMO_PASSWORD web npm run db:seed
+docker compose up -d web
+```
+
+Antes del comando de seed, carga `DEMO_PASSWORD` en el entorno de PowerShell con el mismo valor ficticio de `.env`; `-e DEMO_PASSWORD` lo reenvía sin incluirlo en el comando. Compose ya pasa `ENCRYPTION_KEY_HEX` y usa `db` como host de PostgreSQL. Las migraciones y el seed son explícitos y no se ejecutan al arrancar cada contenedor.
+
+El bloque `web` original se habilitó conservando su configuración. Para disponer de un volumen de nombre estable y TLS en el contenedor sin modificar Compose, se puede ejecutar el servidor con sus opciones de runtime:
+
+```powershell
+docker compose stop web
+docker compose run --rm --service-ports --name pujafacil_web_tls -v pujafacil_private:/app/storage/private -v "${PWD}/.certs:/app/.certs:ro" -e HTTPS_KEY_PATH=/app/.certs/dev-key.pem -e HTTPS_CERT_PATH=/app/.certs/dev-cert.pem web
+```
+
+Las cookies de producción llevan `Secure`: utiliza HTTPS para iniciar sesión en el contenedor. El arranque por HTTP sirve para comprobar disponibilidad, y el desarrollo local habitual continúa con `npm.cmd run dev`. El volumen anónimo declarado por la imagen persiste fuera de su capa escribible, pero para recreaciones y copias de seguridad utiliza el volumen de nombre estable del ejemplo; conserva también el volumen PostgreSQL. No elimines volúmenes si necesitas conservar datos.
 
 ---
 
-## 9. Documentación y Diagramas
+## 11. Documentación y Diagramas
 
 - **Modelo de Datos y Entidades:** Detalle de tablas, tipos y relaciones en [`docs/modelo-datos.md`](docs/modelo-datos.md).
 - **Esquema Prisma:** Definición completa en [`prisma/schema.prisma`](prisma/schema.prisma).
 
 ---
 
-## 10. Declaración sobre el Uso de Inteligencia Artificial
+## 12. Uso de IA
 
 En cumplimiento con las directrices académicas del curso:
-- **Herramientas utilizadas:** Asistentes de IA generativa para aceleración de maquetado inicial, scaffolding de tipados TypeScript y esquematización de pruebas unitarias.
-- **Alcance de su uso:** Generación de código base, resolución de configuraciones de bundler y revisión sintáctica.
-- **Supervisión y autoría:** Todo el código generado fue inspeccionado, adaptado a la arquitectura monolítica requerida, validado contra el esquema de base de datos relacional y probado exhaustivamente por los integrantes del equipo.
+- **Herramientas utilizadas:** Codex para implementar el plan J2/15-C y apoyar la revisión de código.
+- **Finalidad:** Servicios de archivos y auditoría, integración con contratos existentes, pruebas automatizadas y documentación de ejecución.
+- **Revisión:** Se contrasta el código con el esquema Prisma, los permisos, la documentación incluida con Next.js y las comprobaciones lint/test/build. La revisión humana y las pruebas manuales de despliegue, TLS y chat siguen siendo responsabilidad del equipo; no se atribuyen verificaciones que no se hayan ejecutado.
