@@ -3,16 +3,19 @@
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { unlink } from "node:fs/promises";
+import { rename, unlink } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import bcrypt from "bcryptjs";
-import type { Role } from "@prisma/client";
+import type { Prisma, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { encryptCedula } from "@/lib/auth/crypto";
 import { createUserSession, hashToken } from "@/lib/auth/session";
 import { requireActive } from "@/lib/auth/guards";
 import { POST as forgot } from "@/app/api/auth/forgot-password/route";
+import { APPROVAL_REASON } from "@/lib/auth/schemas";
+import { sanitizeAuditDetail } from "@/lib/audit";
+import { activateReviewedAccount, activationSchema } from "@/lib/auth/account-review";
 
 const origin = "http://localhost:3000";
 const emails: string[] = [];
@@ -35,9 +38,10 @@ async function login(email: string, secret = password) {
 }
 async function main() {
   try {
-    const admin = await fixture("ADMIN_SUBASTAS"), buyer = await fixture("COMPRADOR"), auditor = await fixture("AUDITOR");
+    const admin = await fixture("ADMIN_SUBASTAS"), buyer = await fixture("COMPRADOR"), auditor = await fixture("AUDITOR"), verifier = await fixture("VERIFICADOR");
     const noIdentity = await fixture("VENDEDOR", "PENDIENTE");
-    const adminCookie = await login(admin.email), buyerCookie = await login(buyer.email), auditorCookie = await login(auditor.email);
+    const adminCookie = await login(admin.email), buyerCookie = await login(buyer.email), auditorCookie = await login(auditor.email), verifierCookie = await login(verifier.email);
+    const approval = (reviewId = "sin-revision", documentoRevisadoId = "sin-documento") => ({ reviewId, documentoRevisadoId, coherenciaConfirmada: true as const, motivoCodigo: APPROVAL_REASON });
     phase = "registro real con identidad privada";
     const email = `c1-${randomUUID()}@example.test`; emails.push(email);
     const image = await sharp({ create: { width: 8, height: 8, channels: 3, background: "navy" } }).png().toBuffer();
@@ -54,28 +58,99 @@ async function main() {
     await assert.rejects(() => requireActive(new Request(`${origin}/api/chat`, { headers: { Cookie: cookie } })), { status: 403 });
     const fileUrl = `/api/files/${registered.files[0].id}`;
     assert.equal((await call(fileUrl, "GET", undefined, buyerCookie)).status, 403);
+    assert.equal((await call(fileUrl)).status, 403);
+    assert.equal((await call(`/api/files/${randomUUID()}`, "GET", undefined, adminCookie)).status, 404);
     assert.equal((await call(fileUrl, "GET", undefined, cookie)).status, 200);
     assert.equal((await call(fileUrl, "GET", undefined, adminCookie)).status, 200);
     console.log("PASS registro: pendiente, cifrado, documento privado; operaciones pendientes bloqueadas por guard compartido.");
     phase = "autorización y aprobación";
     assert.equal((await call("/api/admin/users")).status, 401);
-    for (const credential of [buyerCookie, auditorCookie]) {
+    for (const credential of [buyerCookie, auditorCookie, verifierCookie]) {
       assert.equal((await call("/api/admin/users", "GET", undefined, credential)).status, 403);
       assert.equal((await call(`/api/admin/users/${registered.id}/activate`, "POST", {}, credential)).status, 403);
+      assert.equal((await call(`/api/admin/users/${registered.id}`, "GET", undefined, credential)).status, 403);
+      assert.equal((await call(fileUrl, "GET", undefined, credential)).status, 403);
     }
-    assert.equal((await call(`/api/admin/users/${noIdentity.id}/activate`, "POST", {}, adminCookie)).status, 409);
+    assert.equal((await call(`/api/admin/users/${noIdentity.id}/activate`, "POST", approval(), adminCookie)).status, 409);
+    assert.equal((await call(`/api/admin/users/${noIdentity.id}`, "GET", undefined, adminCookie)).status, 409);
     const listing = await call("/api/admin/users?pageSize=1", "GET", undefined, adminCookie);
     assert.equal(listing.status, 200);
     const listingBody = await listing.text();
     for (const value of ["nombreCompleto", "email", "cedulaCifrada", "storagePath", "passwordHash"]) assert.ok(!listingBody.includes(value));
     const listed = JSON.parse(listingBody).data; assert.equal(listed.items.length, 1); assert.ok(listed.pages > 1);
-    assert.equal((await call(`/api/admin/users/${registered.id}/activate`, "POST", {}, adminCookie)).status, 200);
-    assert.equal((await call(`/api/admin/users/${registered.id}/activate`, "POST", {}, adminCookie)).status, 409);
+    assert.equal((await call(`/api/admin/users/${registered.id}/activate`, "POST", approval("inventada", registered.files[0].id), adminCookie)).status, 409);
+    const reviewResponse = await call(`/api/admin/users/${registered.id}`, "GET", undefined, adminCookie);
+    assert.equal(reviewResponse.status, 200); assert.ok(reviewResponse.headers.get("cache-control")?.includes("no-store"));
+    const review = (await reviewResponse.json()).data;
+    assert.deepEqual(review.user, { nombreCompleto: registered.nombreCompleto, cedula: "1234567890" });
+    assert.equal(review.identity.id, registered.files[0].id);
+    const approvalBody = approval(review.reviewId, review.identity.id);
+    assert.equal((await call(`/api/admin/users/${registered.id}/activate`, "POST", approvalBody, adminCookie)).status, 409);
+    assert.equal((await call(`/api/admin/users/${registered.id}/activate`, "POST", { ...approvalBody, documentoRevisadoId: "ajeno" }, adminCookie)).status, 409);
+    phase = "archivo ficticio no disponible";
+    const fixturePath = path.resolve(registered.files[0].storagePath);
+    assert.equal(path.dirname(fixturePath), path.resolve("storage/private"));
+    const heldPath = `${fixturePath}.c1-test`;
+    await rename(fixturePath, heldPath);
+    try {
+      assert.equal((await call(fileUrl, "GET", undefined, adminCookie)).status, 404);
+      const failedRead = await prisma.auditEvent.findFirstOrThrow({ where: { actorId: admin.id, resourceId: review.identity.id, action: "IDENTIDAD_CONSULTADA", result: "ERROR" } });
+      assert.deepEqual(failedRead.detail, { kind: "IDENTIDAD", motivoCodigo: "DOCUMENTO_NO_DISPONIBLE" });
+      assert.equal((await call(`/api/admin/users/${registered.id}/activate`, "POST", approvalBody, adminCookie)).status, 409);
+      assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: registered.id } })).status, "PENDIENTE");
+    } finally { await rename(heldPath, fixturePath); }
+    assert.equal((await call(fileUrl, "GET", undefined, adminCookie)).status, 200);
+    const consultation = await prisma.auditEvent.findFirstOrThrow({ where: { actorId: admin.id, action: "IDENTIDAD_CONSULTADA", resourceType: "FileRecord", resourceId: review.identity.id, result: "EXITO", createdAt: { gte: new Date((await prisma.auditEvent.findUniqueOrThrow({ where: { id: review.reviewId } })).createdAt) } } });
+    assert.deepEqual(consultation.detail, { kind: "IDENTIDAD" });
+    const otherAdmin = await fixture("ADMIN_SUBASTAS");
+    const otherAdminCookie = await login(otherAdmin.email);
+    const otherReviewResponse = await call(`/api/admin/users/${registered.id}`, "GET", undefined, otherAdminCookie);
+    assert.equal(otherReviewResponse.status, 200);
+    const otherReview = (await otherReviewResponse.json()).data;
+    assert.equal((await call(fileUrl, "GET", undefined, adminCookie)).status, 200);
+    // Una lectura de admin no acredita a otro admin, aunque sea posterior a sus datos revisados.
+    assert.equal((await call(`/api/admin/users/${registered.id}/activate`, "POST", approval(otherReview.reviewId, review.identity.id), otherAdminCookie)).status, 409);
+    assert.equal((await call(`/api/admin/users/${registered.id}/activate`, "POST", { reviewId: review.reviewId, coherenciaConfirmada: true }, adminCookie)).status, 400);
+    for (const motivoCodigo of ["", "REVISION_INCOMPLETA", "DOCUMENTO_NO_DISPONIBLE", "REVISION_NO_PERMITIDA"]) assert.equal((await call(`/api/admin/users/${registered.id}/activate`, "POST", { ...approvalBody, motivoCodigo }, adminCookie)).status, 400);
+    assert.equal((await call(`/api/admin/users/${registered.id}/activate`, "POST", { ...approvalBody, coherenciaConfirmada: false }, adminCookie)).status, 400);
+    phase = "atomicidad real ante fallo de auditoría inyectado";
+    const originalTransaction = prisma.$transaction;
+    let injectedAuditFailure = false;
+    try {
+      // Solo inyectar el fallo del INSERT de auditoría en este proceso de prueba.
+      // BEGIN/UPDATE/ROLLBACK se ejecutan realmente en PostgreSQL; no se fabrican consultas.
+      prisma.$transaction = ((work: (tx: Prisma.TransactionClient) => Promise<unknown>) => originalTransaction.call(prisma, async (tx: Prisma.TransactionClient) => {
+        const proxy = new Proxy(tx, { get(target, key) {
+          if (key === "auditEvent") return new Proxy(target.auditEvent, { get(delegate, method) {
+            if (method === "create") return () => { injectedAuditFailure = true; throw new Error("Fallo de auditoría C1 inyectado"); };
+            return Reflect.get(delegate, method);
+          } });
+          return Reflect.get(target, key);
+        } });
+        return work(proxy);
+      })) as typeof prisma.$transaction;
+      await assert.rejects(() => activateReviewedAccount(admin.id, registered.id, activationSchema.parse(approvalBody)));
+    } finally { prisma.$transaction = originalTransaction; }
+    assert.equal(injectedAuditFailure, true, "El fallo debe ocurrir en auditoría, después del UPDATE real.");
+    assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: registered.id } })).status, "PENDIENTE");
+    assert.equal(await prisma.auditEvent.count({ where: { resourceId: registered.id, action: "CUENTA_ACTIVADA" } }), 0);
+    console.log("PASS atomicidad PostgreSQL: fallo de auditoría inyectado revierte la activación real.");
+    phase = "activaciones concurrentes reales";
+    const activations = await Promise.all([1, 2].map(() => call(`/api/admin/users/${registered.id}/activate`, "POST", approvalBody, adminCookie)));
+    assert.deepEqual(activations.map((response) => response.status).sort(), [200, 409]);
     assert.equal((await requireActive(new Request(`${origin}/api/test`, { headers: { Cookie: cookie } }))).status, "ACTIVA");
-    assert.equal(await prisma.auditEvent.count({ where: { actorId: admin.id, resourceId: registered.id, action: "CUENTA_ACTIVADA" } }), 1);
+    const event = await prisma.auditEvent.findFirstOrThrow({ where: { actorId: admin.id, resourceId: registered.id, action: "CUENTA_ACTIVADA" } });
+    assert.equal(event.result, "EXITO"); assert.ok(event.createdAt instanceof Date);
+    assert.deepEqual(event.detail, { previousStatus: "PENDIENTE", status: "ACTIVA", motivoCodigo: APPROVAL_REASON });
+    assert.equal(await prisma.auditEvent.count({ where: { resourceId: registered.id, action: "CUENTA_ACTIVADA" } }), 1);
+    console.log("PASS activación real: dos peticiones simultáneas producen 200/409 y una sola auditoría sin PII.");
+    const reviewAudit = await prisma.auditEvent.findUniqueOrThrow({ where: { id: review.reviewId } });
+    assert.equal(reviewAudit.actorId, admin.id); assert.equal(reviewAudit.resourceId, review.identity.id);
+    assert.equal(reviewAudit.action, "CUENTA_DATOS_CONSULTADOS");
+    assert.deepEqual(sanitizeAuditDetail({ motivoCodigo: APPROVAL_REASON }), { motivoCodigo: APPROVAL_REASON });
     const registrationAudit = await prisma.auditEvent.findFirstOrThrow({ where: { actorId: registered.id, action: "CUENTA_REGISTRADA", result: "EXITO" } });
     assert.deepEqual(registrationAudit.detail, { roles: ["COMPRADOR", "VENDEDOR"], status: "PENDIENTE" });
-    console.log("PASS activación: admin exclusivamente, documento requerido, transición única y auditoría persistida.");
+    console.log("PASS controles reales: admin exclusivamente, documento, revisión y motivo obligatorios; consulta de datos auditada.");
     phase = "perfil del titular";
     assert.equal((await call("/api/auth/profile", "PATCH", { telefono: "0990000000", direccion: "Calle ficticia C1" }, cookie)).status, 200);
     assert.equal((await call("/api/auth/profile", "PATCH", { status: "ACTIVA", roles: ["ADMIN_SUBASTAS"] }, cookie)).status, 400);
@@ -131,12 +206,18 @@ async function main() {
     console.log("PASS recuperación real: hash, 10 minutos, caducidad, dos consumos concurrentes, no reutilización y revocación de todas las sesiones.");
     const events = await prisma.auditEvent.findMany({ where: { actorId: registered.id, action: "LOGIN", result: "EXITO" } });
     assert.ok(events.length >= 2);
-    const audited = await prisma.auditEvent.findMany({ where: { OR: [{ actorId: registered.id }, { resourceType: "User", resourceId: registered.id }] } });
+    const audited = await prisma.auditEvent.findMany({ where: { OR: [{ actorId: registered.id }, { resourceType: "User", resourceId: registered.id }, { resourceType: "FileRecord", resourceId: review.identity.id }] } });
     for (const event of audited) {
       const detail = JSON.stringify(event.detail);
       for (const secret of [email, password, newPassword, rawToken, registered.cedulaCifrada, registered.passwordHash, "1234567890"]) assert.ok(!detail.includes(secret));
     }
     console.log("PASS login auditado sin credenciales ni PII en detalle.");
+    phase = "permisos de identidad tras activación real";
+    assert.equal((await call(`/api/admin/users/${registered.id}`, "GET", undefined, adminCookie)).status, 404);
+    const activeIdentity = await call(fileUrl, "GET", undefined, adminCookie);
+    assert.equal(activeIdentity.status, 403);
+    assert.equal((await call(fileUrl, "GET", undefined, cookie)).status, 200);
+    console.log("PASS identidad tras aprobación: admin denegado, titular conserva acceso.");
   } finally {
     const users = await prisma.user.findMany({ where: { email: { in: emails } }, select: { id: true } });
     const ids = users.map(({ id }) => id);

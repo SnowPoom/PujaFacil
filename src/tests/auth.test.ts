@@ -5,14 +5,14 @@ import bcrypt from "bcryptjs";
 const db = vi.hoisted(() => ({
   user: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findMany: vi.fn(), count: vi.fn(), delete: vi.fn() },
   userRole: { deleteMany: vi.fn() },
-  auditEvent: { deleteMany: vi.fn() },
+  auditEvent: { deleteMany: vi.fn(), findFirst: vi.fn() },
   passwordReset: { create: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
   session: { findUnique: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
-  $transaction: vi.fn(),
+  $transaction: vi.fn(), $queryRaw: vi.fn(),
 }));
 vi.mock("../lib/prisma", () => ({ prisma: db }));
 const requestCookies = vi.hoisted(() => vi.fn());
-vi.mock("../lib/audit", () => ({ writeAuditEvent: vi.fn().mockResolvedValue({}) }));
+vi.mock("../lib/audit", async (importOriginal) => ({ ...await importOriginal<typeof import("../lib/audit")>(), writeAuditEvent: vi.fn().mockResolvedValue({}), sanitizeAuditDetail: vi.fn() }));
 vi.mock("../lib/uploads", () => ({
   validateUpload: vi.fn(), saveValidatedUpload: vi.fn(),
   UploadError: class extends Error { constructor(public status: number, public code: string, message: string) { super(message); } },
@@ -28,12 +28,14 @@ import { POST as login } from "../app/api/auth/login/route";
 import { POST as logout } from "../app/api/auth/logout/route";
 import { GET as me } from "../app/api/auth/me/route";
 import { getCurrentUser, requireCurrentUser } from "../lib/auth/server";
-import { writeAuditEvent } from "../lib/audit";
+import { writeAuditEvent, sanitizeAuditDetail } from "../lib/audit";
 import { POST as forgot } from "../app/api/auth/forgot-password/route";
 import { POST as reset } from "../app/api/auth/reset-password/route";
 import { PATCH as profile } from "../app/api/auth/profile/route";
 import { GET as accounts } from "../app/api/admin/users/route";
 import { POST as activate } from "../app/api/admin/users/[id]/activate/route";
+import { GET as reviewAccount } from "../app/api/admin/users/[id]/route";
+import { APPROVAL_REASON } from "../lib/auth/schemas";
 import { POST as register } from "../app/api/auth/register/route";
 import { saveValidatedUpload, validateUpload, UploadError } from "../lib/uploads";
 
@@ -184,13 +186,10 @@ describe("Christian C1 — recuperación, perfil y activación", () => {
     const query = db.user.findMany.mock.calls[0][0]; expect(query.skip).toBe(10);
     for (const key of ["nombreCompleto", "email", "cedulaCifrada", "passwordHash", "files"]) expect(query.select).not.toHaveProperty(key);
   });
-  it("activación exige pendiente y documento, registra auditoría en la misma transacción", async () => {
-    asAdmin(); db.user.updateMany.mockResolvedValue({ count: 1 });
-    expect((await activate(mutation("/api/admin/users/otro/activate", {}), { params: Promise.resolve({ id: "otro" }) })).status).toBe(200);
-    expect(db.user.updateMany).toHaveBeenCalledWith({ where: { id: "otro", status: "PENDIENTE", files: { some: { kind: "IDENTIDAD" } } }, data: { status: "ACTIVA" } });
-    expect(writeAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ actorId: user.id, resourceId: "otro", action: "CUENTA_ACTIVADA", result: "EXITO" }), db);
-    db.user.updateMany.mockResolvedValue({ count: 0 });
-    expect((await activate(mutation("/api/admin/users/otro/activate", {}), { params: Promise.resolve({ id: "otro" }) })).status).toBe(409);
+  it("activación rechaza la petición antigua sin revisión ni motivo", async () => {
+    asAdmin();
+    expect((await activate(mutation("/api/admin/users/otro/activate", {}), { params: Promise.resolve({ id: "otro" }) })).status).toBe(400);
+    expect(db.user.update).not.toHaveBeenCalled();
   });
   it("todas las mutaciones C1 rechazan origen externo antes de consultar DB", async () => {
     for (const handler of [forgot, reset, profile]) {
@@ -208,6 +207,87 @@ describe("Christian C1 — recuperación, perfil y activación", () => {
     expect(writeAuditEvent).toHaveBeenCalledWith({ action: "LOGIN", resourceType: "User", result: "DENEGADO" });
     const events = JSON.stringify(vi.mocked(writeAuditEvent).mock.calls);
     expect(events).not.toContain(password); expect(events).not.toContain(user.email);
+  });
+});
+
+describe("Christian C1 — revisión documental con dependencias J2 simuladas", () => {
+  const updatedAt = new Date("2026-11-15T18:00:00Z");
+  const input = { reviewId: "revision", documentoRevisadoId: "identidad", coherenciaConfirmada: true, motivoCodigo: APPROVAL_REASON };
+  const context = { params: Promise.resolve({ id: "otro" }) };
+  const pending = () => ({ id: "otro", status: "PENDIENTE", updatedAt, nombreCompleto: "Persona ficticia", cedulaCifrada: encryptCedula("1234567890"), files: [{ id: "identidad", mimeType: "image/png" }] });
+  const dataEvent = () => ({ id: "revision", actorId: user.id, action: "CUENTA_DATOS_CONSULTADOS", resourceId: "identidad", resourceType: "FileRecord", createdAt: new Date(), detail: { accountVersion: updatedAt.getTime() } });
+  beforeEach(() => {
+    asAdmin(); db.user.findUnique.mockResolvedValue(pending());
+    db.auditEvent.findFirst.mockResolvedValueOnce(dataEvent()).mockResolvedValue({ id: "lectura" });
+    vi.mocked(sanitizeAuditDetail).mockReturnValue({ motivoCodigo: "[REDACTADO]" });
+  });
+  it("admin consulta solo nombre/cédula y referencia protegida; auditoría no incluye identidad", async () => {
+    vi.mocked(writeAuditEvent).mockResolvedValue({ id: "revision" } as never);
+    const response = await reviewAccount(request(), context);
+    expect(response.status).toBe(200); expect(response.headers.get("cache-control")).toContain("no-store");
+    const payload = await response.json();
+    expect(payload.data.user).toEqual({ nombreCompleto: "Persona ficticia", cedula: "1234567890" });
+    expect(payload.data.identity).toEqual({ id: "identidad", mimeType: "image/png" });
+    const event = vi.mocked(writeAuditEvent).mock.calls[0][0];
+    expect(event).toMatchObject({ actorId: user.id, action: "CUENTA_DATOS_CONSULTADOS", resourceId: "identidad", detail: { accountVersion: updatedAt.getTime() } });
+    expect(JSON.stringify(event)).not.toContain("1234567890"); expect(JSON.stringify(event)).not.toContain("Persona ficticia");
+  });
+  it.each(["COMPRADOR", "AUDITOR", "VERIFICADOR"])("%s no puede revisar ni activar", async (role) => {
+    db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 60000), user: { ...user, roles: [{ role }] } });
+    expect((await reviewAccount(request(), context)).status).toBe(403);
+    expect((await activate(mutation("/api/admin/users/otro/activate", input), context)).status).toBe(403);
+    expect(writeAuditEvent).not.toHaveBeenCalled(); expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it("sin sesión no revela los datos", async () => {
+    expect((await reviewAccount(new Request("http://localhost:3000/api/admin/users/otro/review"), context)).status).toBe(401);
+  });
+  it("sin documento no se abre revisión ni se activa; activa no puede revisarse", async () => {
+    db.user.findUnique.mockResolvedValue({ ...pending(), files: [] });
+    expect((await reviewAccount(request(), context)).status).toBe(409);
+    expect((await activate(mutation("/api/admin/users/otro/activate", input), context)).status).toBe(409);
+    db.user.findUnique.mockResolvedValue({ ...pending(), status: "ACTIVA" });
+    expect((await reviewAccount(request(), context)).status).toBe(404);
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it.each([{ reviewId: "revision", coherenciaConfirmada: true }, { ...input, motivoCodigo: "" }, { ...input, motivoCodigo: "Texto con datos privados" }, { ...input, coherenciaConfirmada: false }, ...["REVISION_INCOMPLETA", "DOCUMENTO_NO_DISPONIBLE", "REVISION_NO_PERMITIDA"].map((motivoCodigo) => ({ ...input, motivoCodigo }))])("sin motivo/confirmación válida se rechaza: %j", async (body) => {
+    expect((await activate(mutation("/api/admin/users/otro/activate", body), context)).status).toBe(400);
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it("rechaza documento de otra cuenta aunque el cliente confirme coherencia", async () => {
+    const response = await activate(mutation("/api/admin/users/otro/activate", { ...input, documentoRevisadoId: "ajeno" }), context);
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: { code: "DOCUMENTO_NO_CORRESPONDE" } });
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it("rechaza una revisión inventada y exige actor, archivo y vigencia en la consulta al servidor", async () => {
+    db.auditEvent.findFirst.mockReset().mockResolvedValue(null);
+    const response = await activate(mutation("/api/admin/users/otro/activate", input), context);
+    expect(response.status).toBe(409);
+    expect(db.auditEvent.findFirst.mock.calls[0][0].where).toMatchObject({ id: "revision", actorId: user.id, resourceId: "identidad", createdAt: { gte: expect.any(Date) } });
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it("rechaza revisión si los datos registrados cambiaron", async () => {
+    db.auditEvent.findFirst.mockReset().mockResolvedValue({ ...dataEvent(), detail: { accountVersion: 0 } });
+    expect((await activate(mutation("/api/admin/users/otro/activate", input), context)).status).toBe(409);
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it("confirmación del navegador no sustituye una consulta de documento auditada por Jonathan", async () => {
+    db.auditEvent.findFirst.mockReset().mockResolvedValueOnce(dataEvent()).mockResolvedValue(null);
+    const response = await activate(mutation("/api/admin/users/otro/activate", input), context);
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: { code: "LECTURA_AUDITADA_REQUERIDA" } });
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it("motivo redactado bloquea activación en vez de simular una auditoría válida", async () => {
+    const response = await activate(mutation("/api/admin/users/otro/activate", input), context);
+    expect(response.status).toBe(503); expect(await response.json()).toMatchObject({ error: { code: "MOTIVO_AUDITORIA_NO_DISPONIBLE" } });
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it("con J2 compatible simulado activa y conserva motivo, actor, cuenta y resultado en transacción", async () => {
+    vi.mocked(sanitizeAuditDetail).mockReturnValue({ motivoCodigo: APPROVAL_REASON });
+    vi.mocked(writeAuditEvent).mockResolvedValue({ detail: { motivoCodigo: APPROVAL_REASON } } as never);
+    expect((await activate(mutation("/api/admin/users/otro/activate", input), context)).status).toBe(200);
+    expect(db.user.update).toHaveBeenCalledWith({ where: { id: "otro" }, data: { status: "ACTIVA" } });
+    expect(writeAuditEvent).toHaveBeenCalledWith({ actorId: user.id, action: "CUENTA_ACTIVADA", resourceType: "User", resourceId: "otro", result: "EXITO", detail: { previousStatus: "PENDIENTE", status: "ACTIVA", motivoCodigo: APPROVAL_REASON } }, db);
+    expect(db.$transaction).toHaveBeenCalledOnce();
   });
 });
 
