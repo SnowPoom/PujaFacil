@@ -2,6 +2,7 @@ import type { AccountStatus, Role } from "@prisma/client";
 import type { Server, Socket } from "socket.io";
 import { ZodError } from "zod";
 import { getUserFromCookieHeader } from "@/lib/auth/session";
+import { setSocketServer } from "@/lib/realtime";
 import { chatJoinSchema, chatSendSchema, type ChatMessageDto } from "@/modules/chat/chat-rules";
 import { assertCanChat, ChatError, saveMessage, validateRoomAccess } from "@/modules/chat/chat-service";
 
@@ -230,6 +231,7 @@ export async function handleChatSend(
 }
 
 export function registerSocketHandlers(io: Server): void {
+  setSocketServer(io);
   io.use(authenticateSocketHandshake);
 
   io.on("connection", (socket) => {
@@ -238,6 +240,9 @@ export function registerSocketHandlers(io: Server): void {
       socket.disconnect(true);
       return;
     }
+
+    // Sala privada del usuario en el servidor (el cliente no puede unirse a la de otro usuario).
+    void socket.join(`user:${data.userId}`);
 
     socket.on("chat:join", (payload: unknown, ack?: (response: ChatJoinAck) => void) => {
       void handleChatJoin(io, socket, payload, ack);

@@ -4,9 +4,13 @@ import { Prisma } from "@prisma/client";
 const db = vi.hoisted(() => ({
   user: { findUnique: vi.fn() },
   session: { findUnique: vi.fn() },
+  article: { findUnique: vi.fn() },
   auction: { findUnique: vi.fn() },
   auctionAlias: { findUnique: vi.fn(), create: vi.fn(), findMany: vi.fn() },
+  bid: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), count: vi.fn() },
   chatMessage: { create: vi.fn(), findMany: vi.fn() },
+  $queryRaw: vi.fn(),
+  $transaction: vi.fn(),
 }));
 
 vi.mock("../lib/prisma", () => ({ prisma: db }));
@@ -27,12 +31,18 @@ import {
   emitRoomPresence,
   handleChatJoin,
   handleChatSend,
+  registerSocketHandlers,
   revalidateSocketAccount,
 } from "../server/socket/index";
+import { emitAuctionUpdated, emitNotificationToUser, getSocketServer, setSocketServer } from "../lib/realtime";
+import { getAuctionBids, getUserBids, placeBid } from "../modules/bids/bid-service";
+import { GET as getAuctionBidsRoute, POST as postAuctionBidRoute } from "../app/api/auctions/[id]/bids/route";
+import { GET as getMyBidsRoute } from "../app/api/me/bids/route";
 import { GET as getChatMessages } from "../app/api/chat/messages/route";
 
 beforeEach(() => {
   vi.resetAllMocks();
+  db.$transaction.mockImplementation(async (callback: (tx: typeof db) => Promise<unknown>) => callback(db));
 });
 
 describe("Kevin 14/11 — Etapa 1: reglas de sala y mensaje", () => {
@@ -557,5 +567,546 @@ describe("Kevin 14/11 — Etapa 6: GET /api/chat/messages", () => {
         ],
       },
     });
+  });
+});
+
+describe("Kevin 15/11 — Etapa 1: Puente realtime.ts (globalThis en servidor Node)", () => {
+  it("registerSocketHandlers registra io en globalThis y emitAuctionUpdated / emitNotificationToUser emiten a las salas correctas", () => {
+    const emitFn = vi.fn();
+    const fakeIo = {
+      use: vi.fn(),
+      on: vi.fn(),
+      to: vi.fn().mockReturnValue({ emit: emitFn }),
+    };
+
+    registerSocketHandlers(fakeIo as never);
+    expect(getSocketServer()).toBe(fakeIo);
+
+    const auctionPayload = {
+      auctionId: "sub-1",
+      highestBid: "160.00",
+      bidCount: 3,
+      status: "ACTIVA" as const,
+      closesAt: "2026-11-17T18:00:00.000Z",
+    };
+    expect(emitAuctionUpdated("sub-1", auctionPayload)).toBe(true);
+    expect(fakeIo.to).toHaveBeenCalledWith("auction:sub-1");
+    expect(emitFn).toHaveBeenCalledWith("auction:updated", auctionPayload);
+
+    const notifPayload = {
+      id: "notif-1",
+      type: "OUTBID",
+      title: "Tu oferta fue superada",
+      body: "Otro postor ofertó $160.00",
+      url: "/subastas/sub-1",
+      createdAt: "2026-11-15T18:00:00.000Z",
+    };
+    expect(emitNotificationToUser("u-99", notifPayload)).toBe(true);
+    expect(fakeIo.to).toHaveBeenCalledWith("user:u-99");
+    expect(emitFn).toHaveBeenCalledWith("notification:new", notifPayload);
+
+    setSocketServer(undefined as never);
+    expect(emitAuctionUpdated("sub-1", auctionPayload)).toBe(false);
+  });
+});
+
+describe("Kevin 15/11 — Etapa 2: Servicio transaccional de ofertas (bid-service.ts)", () => {
+  const activeBuyer = { status: "ACTIVA" as const, roles: [{ role: "COMPRADOR" as const }] };
+  const makeActiveAuctionRow = () => ({
+    id: "sub-1",
+    articleId: "art-1",
+    startingPrice: new Prisma.Decimal("150.00"),
+    minIncrement: new Prisma.Decimal("10.00"),
+    opensAt: new Date(Date.now() - 3_600_000),
+    closesAt: new Date(Date.now() + 3_600_000),
+    status: "ACTIVA" as const,
+  });
+
+  it("acepta oferta válida, bloquea con SELECT FOR UPDATE y emite auction:updated DESPUÉS de la transacción", async () => {
+    const eventsOrder: string[] = [];
+    const emitFn = vi.fn().mockImplementation(() => {
+      eventsOrder.push("socket:auction:updated");
+    });
+    setSocketServer({ to: vi.fn().mockReturnValue({ emit: emitFn }) } as never);
+
+    db.user.findUnique.mockResolvedValueOnce(activeBuyer);
+    db.$transaction.mockImplementationOnce(async (callback: (tx: typeof db) => Promise<unknown>) => {
+      eventsOrder.push("tx:start");
+      const res = await callback(db);
+      eventsOrder.push("tx:commit");
+      return res;
+    });
+    db.$queryRaw.mockResolvedValueOnce([makeActiveAuctionRow()]);
+    db.article.findUnique.mockResolvedValueOnce({ ownerId: "vendedor-1" });
+    db.bid.findUnique.mockResolvedValueOnce(null);
+    db.bid.findFirst.mockResolvedValueOnce({ id: "b-prev", amount: new Prisma.Decimal("150.00"), buyerId: "buyer-prev" });
+    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Postor-aa1122" });
+    const acceptedAt = new Date("2026-11-15T18:00:00.000Z");
+    db.bid.create.mockResolvedValueOnce({
+      id: "bid-new",
+      amount: new Prisma.Decimal("160.00"),
+      acceptedAt,
+    });
+    db.bid.count.mockResolvedValueOnce(2);
+
+    const result = await placeBid({
+      auctionId: "sub-1",
+      buyerId: "buyer-1",
+      amount: "160.00",
+      requestId: "req-1",
+    });
+
+    expect(eventsOrder).toEqual(["tx:start", "tx:commit", "socket:auction:updated"]);
+    expect(result).toMatchObject({
+      id: "bid-new",
+      amount: "160.00",
+      auctionId: "sub-1",
+      acceptedAt: acceptedAt.toISOString(),
+      alias: "Postor-aa1122",
+      idempotent: false,
+    });
+    expect(emitFn).toHaveBeenCalledWith(
+      "auction:updated",
+      expect.objectContaining({
+        auctionId: "sub-1",
+        highestBid: "160.00",
+        bidCount: 2,
+        status: "ACTIVA",
+      }),
+    );
+    setSocketServer(undefined as never);
+  });
+
+  it("rechaza monto bajo (BID_TOO_LOW 409) tanto frente al precio inicial como frente a oferta máxima + minIncrement", async () => {
+    // Caso 1: sin ofertas previas, mínimo = startingPrice (150.00), envía 149.99
+    db.user.findUnique.mockResolvedValueOnce(activeBuyer);
+    db.$queryRaw.mockResolvedValueOnce([makeActiveAuctionRow()]);
+    db.article.findUnique.mockResolvedValueOnce({ ownerId: "vendedor-1" });
+    db.bid.findUnique.mockResolvedValueOnce(null);
+    db.bid.findFirst.mockResolvedValueOnce(null);
+
+    await expect(
+      placeBid({ auctionId: "sub-1", buyerId: "buyer-1", amount: "149.99", requestId: "req-low-1" }),
+    ).rejects.toMatchObject({ status: 409, code: "BID_TOO_LOW" });
+
+    // Caso 2: oferta previa de 150.00 + incremento 10.00 = mínimo 160.00, envía 155.00
+    db.user.findUnique.mockResolvedValueOnce(activeBuyer);
+    db.$queryRaw.mockResolvedValueOnce([makeActiveAuctionRow()]);
+    db.article.findUnique.mockResolvedValueOnce({ ownerId: "vendedor-1" });
+    db.bid.findUnique.mockResolvedValueOnce(null);
+    db.bid.findFirst.mockResolvedValueOnce({ id: "b1", amount: new Prisma.Decimal("150.00"), buyerId: "buyer-2" });
+
+    await expect(
+      placeBid({ auctionId: "sub-1", buyerId: "buyer-1", amount: "155.00", requestId: "req-low-2" }),
+    ).rejects.toMatchObject({ status: 409, code: "BID_TOO_LOW" });
+    expect(db.bid.create).not.toHaveBeenCalled();
+  });
+
+  it("rechaza al propietario del artículo (OWN_ITEM 403), cuenta PENDIENTE (403) y subasta cerrada/no activa (AUCTION_NOT_ACTIVE 409)", async () => {
+    // 1. Cuenta PENDIENTE
+    db.user.findUnique.mockResolvedValueOnce({ status: "PENDIENTE", roles: [{ role: "COMPRADOR" }] });
+    await expect(
+      placeBid({ auctionId: "sub-1", buyerId: "buyer-pend", amount: "160.00", requestId: "r1" }),
+    ).rejects.toMatchObject({ status: 403, code: "CUENTA_NO_ACTIVA" });
+
+    // 2. Propietario del propio artículo
+    db.user.findUnique.mockResolvedValueOnce({
+      status: "ACTIVA",
+      roles: [{ role: "COMPRADOR" }, { role: "VENDEDOR" }],
+    });
+    db.$queryRaw.mockResolvedValueOnce([makeActiveAuctionRow()]);
+    db.article.findUnique.mockResolvedValueOnce({ ownerId: "owner-user" });
+    await expect(
+      placeBid({ auctionId: "sub-1", buyerId: "owner-user", amount: "160.00", requestId: "r2" }),
+    ).rejects.toMatchObject({ status: 403, code: "OWN_ITEM" });
+
+    // 3. Subasta fuera de horario (closesAt en el pasado)
+    db.user.findUnique.mockResolvedValueOnce(activeBuyer);
+    db.$queryRaw.mockResolvedValueOnce([
+      { ...makeActiveAuctionRow(), closesAt: new Date(Date.now() - 1000) },
+    ]);
+    db.article.findUnique.mockResolvedValueOnce({ ownerId: "vendedor-1" });
+    db.bid.findUnique.mockResolvedValueOnce(null);
+    await expect(
+      placeBid({ auctionId: "sub-1", buyerId: "buyer-1", amount: "160.00", requestId: "r3" }),
+    ).rejects.toMatchObject({ status: 409, code: "AUCTION_NOT_ACTIVE" });
+  });
+
+  it("garantiza idempotencia con el mismo requestId y rechaza 409 si repite requestId con distinto importe", async () => {
+    const existingDate = new Date("2026-11-15T18:05:00.000Z");
+
+    // Mismo requestId + mismo importe -> devuelve la misma oferta sin insertar otra
+    db.user.findUnique.mockResolvedValueOnce(activeBuyer);
+    db.$queryRaw.mockResolvedValueOnce([makeActiveAuctionRow()]);
+    db.article.findUnique.mockResolvedValueOnce({ ownerId: "vendedor-1" });
+    db.bid.findUnique.mockResolvedValueOnce({
+      id: "bid-existing",
+      amount: new Prisma.Decimal("160.00"),
+      acceptedAt: existingDate,
+    });
+    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Postor-idem01" });
+    db.bid.findFirst.mockResolvedValueOnce({ amount: new Prisma.Decimal("160.00") });
+    db.bid.count.mockResolvedValueOnce(1);
+
+    const idemRes = await placeBid({
+      auctionId: "sub-1",
+      buyerId: "buyer-1",
+      amount: "160.00",
+      requestId: "req-dup",
+    });
+    expect(idemRes).toMatchObject({
+      id: "bid-existing",
+      amount: "160.00",
+      alias: "Postor-idem01",
+      idempotent: true,
+    });
+    expect(db.bid.create).not.toHaveBeenCalled();
+
+    // Mismo requestId + distinto importe -> 409 DUPLICATE_REQUEST_CONFLICT
+    db.user.findUnique.mockResolvedValueOnce(activeBuyer);
+    db.$queryRaw.mockResolvedValueOnce([makeActiveAuctionRow()]);
+    db.article.findUnique.mockResolvedValueOnce({ ownerId: "vendedor-1" });
+    db.bid.findUnique.mockResolvedValueOnce({
+      id: "bid-existing",
+      amount: new Prisma.Decimal("160.00"),
+      acceptedAt: existingDate,
+    });
+
+    await expect(
+      placeBid({
+        auctionId: "sub-1",
+        buyerId: "buyer-1",
+        amount: "180.00",
+        requestId: "req-dup",
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "DUPLICATE_REQUEST_CONFLICT" });
+  });
+
+  it("ante dos ofertas simultáneas al mismo mínimo (150.00), solo la primera se acepta y la segunda falla 409 BID_TOO_LOW", async () => {
+    let highestInDb: { id: string; amount: Prisma.Decimal; buyerId: string } | null = null;
+    db.user.findUnique.mockResolvedValue(activeBuyer);
+    db.$queryRaw.mockResolvedValue([makeActiveAuctionRow()]);
+    db.article.findUnique.mockResolvedValue({ ownerId: "vendedor-1" });
+    db.bid.findUnique.mockResolvedValue(null);
+    db.bid.findFirst.mockImplementation(async () => highestInDb);
+    db.auctionAlias.findUnique.mockResolvedValue({ alias: "Postor-conc01" });
+    db.bid.create.mockImplementation(async ({ data }: { data: { buyerId: string; amount: string } }) => {
+      const created = {
+        id: `bid-${data.buyerId}`,
+        amount: new Prisma.Decimal(data.amount),
+        acceptedAt: new Date(),
+      };
+      highestInDb = { id: created.id, amount: created.amount, buyerId: data.buyerId };
+      return created;
+    });
+    db.bid.count.mockResolvedValue(1);
+
+    const first = await placeBid({
+      auctionId: "sub-1",
+      buyerId: "buyer-1",
+      amount: "150.00",
+      requestId: "req-c1",
+    });
+    expect(first.amount).toBe("150.00");
+
+    await expect(
+      placeBid({
+        auctionId: "sub-1",
+        buyerId: "buyer-2",
+        amount: "150.00",
+        requestId: "req-c2",
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "BID_TOO_LOW" });
+  });
+
+  it("getAuctionBids y getUserBids ocultan identidades ajenas y formatean importes con 2 decimales", async () => {
+    const opensAt = new Date("2026-11-15T10:00:00.000Z");
+    const closesAt = new Date("2026-11-16T10:00:00.000Z");
+    const bidDate = new Date("2026-11-15T12:00:00.000Z");
+
+    db.auction.findUnique.mockResolvedValueOnce({
+      id: "sub-1",
+      status: "ACTIVA",
+      startingPrice: new Prisma.Decimal("150.00"),
+      minIncrement: new Prisma.Decimal("10.00"),
+      opensAt,
+      closesAt,
+      article: { title: "Reloj Suizo", category: "Relojes" },
+    });
+    db.bid.findMany.mockResolvedValueOnce([
+      { buyerId: "u1", amount: new Prisma.Decimal("160.00"), acceptedAt: bidDate },
+    ]);
+    db.auctionAlias.findMany.mockResolvedValueOnce([{ userId: "u1", alias: "Postor-112233" }]);
+
+    const snapshot = await getAuctionBids("sub-1");
+    expect(snapshot).toMatchObject({
+      auctionId: "sub-1",
+      highestBid: "160.00",
+      minNextBid: "170.00",
+      bidCount: 1,
+      items: [{ alias: "Postor-112233", amount: "160.00", acceptedAt: bidDate.toISOString() }],
+    });
+    expect(Object.keys(snapshot.items[0])).toEqual(["alias", "amount", "acceptedAt"]);
+
+    db.bid.findMany.mockResolvedValueOnce([
+      {
+        id: "b1",
+        auctionId: "sub-1",
+        amount: new Prisma.Decimal("160.00"),
+        acceptedAt: bidDate,
+        auction: {
+          status: "ACTIVA",
+          closesAt,
+          winnerBidId: null,
+          article: { title: "Reloj Suizo" },
+          bids: [{ id: "b1" }],
+          aliases: [{ alias: "Postor-112233" }],
+        },
+      },
+    ]);
+
+    const myBids = await getUserBids("u1");
+    expect(myBids).toEqual([
+      {
+        id: "b1",
+        auctionId: "sub-1",
+        auctionTitle: "Reloj Suizo",
+        auctionStatus: "ACTIVA",
+        amount: "160.00",
+        acceptedAt: bidDate.toISOString(),
+        closesAt: closesAt.toISOString(),
+        alias: "Postor-112233",
+        isLeadingOrWinner: true,
+      },
+    ]);
+  });
+});
+
+describe("Kevin 15/11 — Etapa 3: Route Handler GET/POST /api/auctions/[id]/bids", () => {
+  const validToken = "a".repeat(64);
+  const buyerSession = {
+    expiresAt: new Date(Date.now() + 60_000),
+    user: {
+      id: "buyer-1",
+      nombreCompleto: "Carlos Comprador",
+      email: "comprador1@pujafacil.test",
+      status: "ACTIVA" as const,
+      roles: [{ role: "COMPRADOR" as const }],
+    },
+  };
+  const ctx = { params: Promise.resolve({ id: "sub-1" }) };
+
+  it("POST /api/auctions/[id]/bids valida origen, rol COMPRADOR, JSON y devuelve 201 con {id,amount,auctionId,acceptedAt,alias}", async () => {
+    db.session.findUnique.mockResolvedValue(buyerSession);
+    db.user.findUnique.mockResolvedValueOnce({ status: "ACTIVA", roles: [{ role: "COMPRADOR" }] });
+    db.$queryRaw.mockResolvedValueOnce([
+      {
+        id: "sub-1",
+        articleId: "art-1",
+        startingPrice: new Prisma.Decimal("150.00"),
+        minIncrement: new Prisma.Decimal("10.00"),
+        opensAt: new Date(Date.now() - 60_000),
+        closesAt: new Date(Date.now() + 60_000),
+        status: "ACTIVA",
+      },
+    ]);
+    db.article.findUnique.mockResolvedValueOnce({ ownerId: "vendedor-1" });
+    db.bid.findUnique.mockResolvedValueOnce(null);
+    db.bid.findFirst.mockResolvedValueOnce(null);
+    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Pujador-Alfa" });
+    const acceptedAt = new Date("2026-11-15T18:10:00.000Z");
+    db.bid.create.mockResolvedValueOnce({
+      id: "bid-201",
+      amount: new Prisma.Decimal("150.00"),
+      acceptedAt,
+    });
+    db.bid.count.mockResolvedValueOnce(1);
+
+    const req = new Request("http://localhost:3000/api/auctions/sub-1/bids", {
+      method: "POST",
+      headers: {
+        origin: "http://localhost:3000",
+        cookie: `pf_session=${validToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ amount: "150.00", requestId: "uuid-1" }),
+    });
+
+    const res = await postAuctionBidRoute(req, ctx);
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({
+      ok: true,
+      data: {
+        id: "bid-201",
+        amount: "150.00",
+        auctionId: "sub-1",
+        acceptedAt: acceptedAt.toISOString(),
+        alias: "Pujador-Alfa",
+      },
+    });
+  });
+
+  it("POST /api/auctions/[id]/bids rechaza sin sesión (401), rol sin COMPRADOR (403) y errores comerciales (409 BID_TOO_LOW)", async () => {
+    // 1. Sin sesión -> 401
+    const unauthReq = new Request("http://localhost:3000/api/auctions/sub-1/bids", {
+      method: "POST",
+      headers: { origin: "http://localhost:3000", "Content-Type": "application/json" },
+      body: JSON.stringify({ amount: "150.00", requestId: "uuid-1" }),
+    });
+    expect((await postAuctionBidRoute(unauthReq, ctx)).status).toBe(401);
+
+    // 2. Rol VENDEDOR puro (sin COMPRADOR) -> 403
+    db.session.findUnique.mockResolvedValue({
+      ...buyerSession,
+      user: { ...buyerSession.user, roles: [{ role: "VENDEDOR" as const }] },
+    });
+    const sellerReq = new Request("http://localhost:3000/api/auctions/sub-1/bids", {
+      method: "POST",
+      headers: {
+        origin: "http://localhost:3000",
+        cookie: `pf_session=${validToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ amount: "150.00", requestId: "uuid-1" }),
+    });
+    expect((await postAuctionBidRoute(sellerReq, ctx)).status).toBe(403);
+
+    // 3. BID_TOO_LOW -> 409 con código comercial y details
+    db.session.findUnique.mockResolvedValue(buyerSession);
+    db.user.findUnique.mockResolvedValueOnce({ status: "ACTIVA", roles: [{ role: "COMPRADOR" }] });
+    db.$queryRaw.mockResolvedValueOnce([
+      {
+        id: "sub-1",
+        articleId: "art-1",
+        startingPrice: new Prisma.Decimal("150.00"),
+        minIncrement: new Prisma.Decimal("10.00"),
+        opensAt: new Date(Date.now() - 60_000),
+        closesAt: new Date(Date.now() + 60_000),
+        status: "ACTIVA",
+      },
+    ]);
+    db.article.findUnique.mockResolvedValueOnce({ ownerId: "vendedor-1" });
+    db.bid.findUnique.mockResolvedValueOnce(null);
+    db.bid.findFirst.mockResolvedValueOnce({ id: "b1", amount: new Prisma.Decimal("200.00"), buyerId: "buyer-2" });
+
+    const lowReq = new Request("http://localhost:3000/api/auctions/sub-1/bids", {
+      method: "POST",
+      headers: {
+        origin: "http://localhost:3000",
+        cookie: `pf_session=${validToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ amount: "205.00", requestId: "uuid-low" }),
+    });
+    const lowRes = await postAuctionBidRoute(lowReq, ctx);
+    expect(lowRes.status).toBe(409);
+    expect(await lowRes.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: "BID_TOO_LOW",
+        details: { minRequired: "210.00", highestBid: "200.00" },
+      },
+    });
+  });
+
+  it("GET /api/auctions/[id]/bids es público y devuelve historial con alias sin userId real", async () => {
+    const opensAt = new Date("2026-11-15T10:00:00.000Z");
+    const closesAt = new Date("2026-11-16T10:00:00.000Z");
+    const acceptedAt = new Date("2026-11-15T12:00:00.000Z");
+
+    db.auction.findUnique.mockResolvedValueOnce({
+      id: "sub-1",
+      status: "ACTIVA",
+      startingPrice: new Prisma.Decimal("150.00"),
+      minIncrement: new Prisma.Decimal("10.00"),
+      opensAt,
+      closesAt,
+      article: { title: "Mapa Antiguo", category: "Historia" },
+    });
+    db.bid.findMany.mockResolvedValueOnce([
+      { buyerId: "buyer-1", amount: new Prisma.Decimal("160.00"), acceptedAt },
+    ]);
+    db.auctionAlias.findMany.mockResolvedValueOnce([{ userId: "buyer-1", alias: "Pujador-Alfa" }]);
+
+    const res = await getAuctionBidsRoute(new Request("http://localhost:3000/api/auctions/sub-1/bids"), ctx);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.ok).toBe(true);
+    expect(json.data.items).toEqual([
+      { alias: "Pujador-Alfa", amount: "160.00", acceptedAt: acceptedAt.toISOString() },
+    ]);
+    expect(JSON.stringify(json)).not.toContain("buyer-1");
+  });
+});
+
+describe("Kevin 15/11 — Etapa 4: GET /api/me/bids", () => {
+  const validToken = "a".repeat(64);
+  const buyerSession = {
+    expiresAt: new Date(Date.now() + 60_000),
+    user: {
+      id: "buyer-1",
+      nombreCompleto: "Carlos Comprador",
+      email: "comprador1@pujafacil.test",
+      status: "ACTIVA" as const,
+      roles: [{ role: "COMPRADOR" as const }],
+    },
+  };
+
+  it("GET /api/me/bids exige sesión activa COMPRADOR y devuelve ofertas propias sin identidades ajenas", async () => {
+    expect((await getMyBidsRoute(new Request("http://localhost:3000/api/me/bids"))).status).toBe(401);
+
+    db.session.findUnique.mockResolvedValue({
+      ...buyerSession,
+      user: { ...buyerSession.user, status: "PENDIENTE" as const },
+    });
+    const pendRes = await getMyBidsRoute(
+      new Request("http://localhost:3000/api/me/bids", { headers: { cookie: `pf_session=${validToken}` } }),
+    );
+    expect(pendRes.status).toBe(403);
+
+    db.session.findUnique.mockResolvedValue(buyerSession);
+    const acceptedAt = new Date("2026-11-15T14:00:00.000Z");
+    const closesAt = new Date("2026-11-16T18:00:00.000Z");
+    db.bid.findMany.mockResolvedValueOnce([
+      {
+        id: "bid-1",
+        auctionId: "demo-subasta-programada",
+        amount: new Prisma.Decimal("170.00"),
+        acceptedAt,
+        auction: {
+          status: "ACTIVA",
+          closesAt,
+          winnerBidId: null,
+          article: { title: "Reloj Antiguo Suizo (Demo)" },
+          bids: [{ id: "bid-other" }],
+          aliases: [{ alias: "Pujador-Alfa" }],
+        },
+      },
+    ]);
+
+    const okRes = await getMyBidsRoute(
+      new Request("http://localhost:3000/api/me/bids", { headers: { cookie: `pf_session=${validToken}` } }),
+    );
+    expect(okRes.status).toBe(200);
+    const payload = await okRes.json();
+    expect(payload).toEqual({
+      ok: true,
+      data: {
+        items: [
+          {
+            id: "bid-1",
+            auctionId: "demo-subasta-programada",
+            auctionTitle: "Reloj Antiguo Suizo (Demo)",
+            auctionStatus: "ACTIVA",
+            amount: "170.00",
+            acceptedAt: acceptedAt.toISOString(),
+            closesAt: closesAt.toISOString(),
+            alias: "Pujador-Alfa",
+            isLeadingOrWinner: false,
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(payload)).not.toContain("bid-other");
   });
 });
