@@ -5,7 +5,7 @@ import Button from "@/components/ui/Button";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { activationSchema, APPROVAL_REASON } from "@/lib/auth/schemas";
 
-type Review = { reviewId: string; user: { nombreCompleto: string; cedula: string }; identity: { id: string; mimeType: string }; objectUrl: string };
+type Review = { reviewId: string; user: { nombreCompleto: string; cedula: string }; identity: { id: string; mimeType: string }; objectUrl?: string };
 
 export default function AccountReview({ userId, onClose, onActivated }: { userId: string; onClose: () => void; onActivated: () => void }) {
   const [review, setReview] = useState<Review | null>(null);
@@ -24,14 +24,18 @@ export default function AccountReview({ userId, onClose, onActivated }: { userId
         const response = await fetch(`/api/admin/users/${userId}`, { credentials: "same-origin", cache: "no-store", signal: controller.signal });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error?.message ?? "No se pudo abrir la revisión.");
-        const file = await fetch(`/api/files/${result.data.identity.id}`, { credentials: "same-origin", cache: "no-store", signal: controller.signal });
-        if (!file.ok) {
-          const failure = await file.json();
-          throw new Error(failure.error?.message ?? "No se pudo consultar el documento de identidad protegido.");
+        // Las imágenes se muestran aquí. El PDF se consulta únicamente desde su enlace.
+        if (result.data.identity.mimeType.startsWith("image/")) {
+          const file = await fetch(`/api/files/${result.data.identity.id}`, { credentials: "same-origin", cache: "no-store", signal: controller.signal });
+          if (!file.ok) {
+            const failure = await file.json();
+            throw new Error(failure.error?.message ?? "No se pudo consultar el documento de identidad protegido.");
+          }
+          const blob = await file.blob();
+          if (controller.signal.aborted) return;
+          objectUrl = URL.createObjectURL(blob);
         }
-        const blob = await file.blob();
         if (controller.signal.aborted) return;
-        objectUrl = URL.createObjectURL(blob);
         setReview({ ...result.data, objectUrl });
       } catch (error) {
         if (!controller.signal.aborted) setError(error instanceof Error ? error.message : "No se pudo abrir la revisión.");
@@ -66,7 +70,7 @@ export default function AccountReview({ userId, onClose, onActivated }: { userId
         // eslint-disable-next-line @next/next/no-img-element
         <img src={review.objectUrl} alt="Documento de identidad ficticio para revisión" className="max-h-96 w-full object-contain" /> :
         <p>Documento PDF disponible. Ábrelo en otra pestaña para cotejarlo con los datos registrados.</p>}
-      <a href={`/api/files/${review.identity.id}`} target="_blank" rel="noopener noreferrer" className="pf-btn-secondary">{review.identity.mimeType === "application/pdf" ? "Abrir PDF protegido en otra pestaña" : "Abrir documento protegido en otra pestaña"}</a>
+      <a href={review.objectUrl ?? `/api/files/${review.identity.id}`} target="_blank" rel="noopener noreferrer" className="pf-btn-secondary">{review.identity.mimeType === "application/pdf" ? "Abrir PDF protegido en otra pestaña" : "Abrir documento protegido en otra pestaña"}</a>
       <fieldset disabled={busy} className="space-y-3">
         <label className="flex gap-2"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />He revisado el documento y comprobado su coherencia con los datos registrados.</label>
         <div><label htmlFor="approval-reason" className="pf-label">Motivo de aprobación</label><select id="approval-reason" className="pf-input" value={reason} onChange={(event) => setReason(event.target.value)}><option value="">Selecciona un motivo</option><option value={APPROVAL_REASON}>Datos registrados coherentes con el documento revisado</option></select></div>

@@ -80,14 +80,6 @@ async function main() {
     assert.equal((await call(fileUrl)).status, 403);
     assert.equal((await call(`/api/files/${randomUUID()}`, "GET", undefined, adminCookie)).status, 404);
     assert.equal((await call(fileUrl, "GET", undefined, cookie)).status, 200);
-    const documentResponse = await call(fileUrl, "GET", undefined, adminCookie);
-    assert.equal(documentResponse.status, 200);
-    assert.equal(documentResponse.headers.get("content-type"), identityMime);
-    assert.ok(documentResponse.headers.get("content-disposition")?.startsWith("inline;"));
-    const documentBytes = Buffer.from(await documentResponse.arrayBuffer());
-    if (identityFormat === "pdf") assert.equal(documentBytes.subarray(0, 5).toString(), "%PDF-");
-    else assert.equal((await sharp(documentBytes).metadata()).format, "png");
-    console.log(`PASS documento ${identityFormat.toUpperCase()}: bytes reales y entrega inline protegida.`);
     console.log("PASS registro: pendiente, cifrado, documento privado; operaciones pendientes bloqueadas por guard compartido.");
     phase = "autorización y aprobación";
     assert.equal((await call("/api/admin/users")).status, 401);
@@ -111,7 +103,14 @@ async function main() {
     assert.deepEqual(review.user, { nombreCompleto: registered.nombreCompleto, cedula: "1234567890" });
     assert.equal(review.identity.id, registered.files[0].id);
     const approvalBody = approval(review.reviewId, review.identity.id);
-    assert.equal((await call(`/api/admin/users/${registered.id}/activate`, "POST", approvalBody, adminCookie)).status, 409);
+    const successfulReads = () => prisma.auditEvent.count({ where: { actorId: admin.id, action: "IDENTIDAD_CONSULTADA", resourceId: review.identity.id, result: "EXITO" } });
+    assert.equal(await successfulReads(), 0, "Consultar los datos no debe consultar automáticamente el documento.");
+    const unopenedActivation = await call(`/api/admin/users/${registered.id}/activate`, "POST", approvalBody, adminCookie);
+    assert.equal(unopenedActivation.status, 409);
+    assert.equal((await unopenedActivation.json()).error.code, "LECTURA_AUDITADA_REQUERIDA");
+    assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: registered.id } })).status, "PENDIENTE");
+    assert.equal(await successfulReads(), 0);
+    console.log(`PASS ${identityFormat.toUpperCase()} sin abrir: cero consultas exitosas y activación rechazada pese a confirmación y motivo válidos.`);
     assert.equal((await call(`/api/admin/users/${registered.id}/activate`, "POST", { ...approvalBody, documentoRevisadoId: "ajeno" }, adminCookie)).status, 409);
     phase = "archivo ficticio no disponible";
     const fixturePath = path.resolve(registered.files[0].storagePath);
@@ -125,7 +124,15 @@ async function main() {
       assert.equal((await call(`/api/admin/users/${registered.id}/activate`, "POST", approvalBody, adminCookie)).status, 409);
       assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: registered.id } })).status, "PENDIENTE");
     } finally { await rename(heldPath, fixturePath); }
-    assert.equal((await call(fileUrl, "GET", undefined, adminCookie)).status, 200);
+    const documentResponse = await call(fileUrl, "GET", undefined, adminCookie);
+    assert.equal(documentResponse.status, 200);
+    assert.equal(documentResponse.headers.get("content-type"), identityMime);
+    assert.ok(documentResponse.headers.get("content-disposition")?.startsWith("inline;"));
+    const documentBytes = Buffer.from(await documentResponse.arrayBuffer());
+    if (identityFormat === "pdf") assert.equal(documentBytes.subarray(0, 5).toString(), "%PDF-");
+    else assert.equal((await sharp(documentBytes).metadata()).format, "png");
+    assert.equal(await successfulReads(), 1, "La apertura explícita debe generar una sola consulta exitosa.");
+    console.log(`PASS documento ${identityFormat.toUpperCase()}: apertura explícita protegida, bytes reales y una consulta auditada.`);
     const consultation = await prisma.auditEvent.findFirstOrThrow({ where: { actorId: admin.id, action: "IDENTIDAD_CONSULTADA", resourceType: "FileRecord", resourceId: review.identity.id, result: "EXITO", createdAt: { gte: new Date((await prisma.auditEvent.findUniqueOrThrow({ where: { id: review.reviewId } })).createdAt) } } });
     assert.deepEqual(consultation.detail, { kind: "IDENTIDAD" });
     const otherAdmin = await fixture("ADMIN_SUBASTAS");
