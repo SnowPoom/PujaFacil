@@ -48,4 +48,3 @@ next-env.d.ts
 # PujaFácil — archivos privados y certificados
 /storage/private/
 /.certs/
-/agent

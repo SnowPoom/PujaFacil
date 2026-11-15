@@ -171,6 +171,8 @@ npm.cmd run build
 
 Verificación ejecutada para J2 (15 de noviembre): lint correcto, 152 pruebas aprobadas y build de producción correcto tanto localmente como dentro de Docker. Se ejecutó el seed dos veces sobre PostgreSQL y se verificaron las siete cuentas, hashes bcrypt, descifrado de cédulas ficticias y ausencia de duplicados. Una prueba de integración en el contenedor comprobó subidas, eliminación de EXIF, permisos, borrado protegido y auditoría con la base real; también comprobó HTTPS y conexión Socket.IO con transporte WebSocket seguro en el mismo servidor. Esa comprobación de WSS valida el transporte, no los futuros handlers del chat.
 
+Verificación de la actualización de identidad v2 (15 de noviembre), después de integrar `origin/main` hasta `c374c55`: lint y build local correctos; 112 pruebas de infraestructura y 253 pruebas totales aprobadas. Las nuevas comprobaciones de permisos, consultas y fallos de auditoría usan Prisma y disco simulados. Esta actualización no añade una nueva verificación con PostgreSQL/Docker ni valida el flujo de activación pendiente de Christian.
+
 ---
 
 ## 8. Configuración Opcional de HTTPS / WSS Local
@@ -198,19 +200,25 @@ El servidor `server.ts` soporta TLS de forma nativa sin requerir un proxy invers
 
 | Tipo | Formatos reales | Límite | Lectura en `GET /api/files/[id]` |
 |---|---|---|---|
-| `IDENTIDAD` | JPEG, PNG, WebP o PDF | Imagen 10 MB; PDF 20 MB | Titular o `ADMIN_SUBASTAS` |
+| `IDENTIDAD` | JPEG, PNG, WebP o PDF | Imagen 10 MB; PDF 20 MB | Titular con sesión válida o `ADMIN_SUBASTAS` activo para revisar una cuenta `PENDIENTE` |
 | `CERTIFICADO` | PDF | 20 MB | Titular, administrador o verificador asignado |
 | `FOTO` | JPEG, PNG, WebP | 10 MB | Pública para artículo `APROBADO` o `ASOCIADO_SUBASTA`; en otros estados, titular, administrador o verificador asignado |
 
 Los límites se calculan en bytes (1 MB = 1024² bytes). La validación compara magic numbers, extensión y MIME declarado, rechaza vacíos, nombres con rutas y dobles extensiones, y recodifica las imágenes con Sharp para eliminar EXIF y otros metadatos. Un MIME vacío se acepta si el contenido real y la extensión coinciden. Los PDF se validan por tipo y firma `%PDF-`; no existe análisis antivirus. Los binarios se guardan con UUID en `storage/private`, fuera de `public`, con nombre de respuesta neutro `archivo.ext` para evitar PII en nombres enviados por clientes. No se expone `storagePath`; las lecturas usan `private, no-store`.
 
+**Revisión de cédula/documento de identidad (RN-009 y RF-APP-11):** el titular puede consultar su documento mientras su sesión sea válida, incluso si su cuenta está pendiente. Para consultar el documento de otra persona, se comprueban de nuevo en PostgreSQL el estado `ACTIVA` y el rol exclusivo `ADMIN_SUBASTAS` del solicitante, además del estado `PENDIENTE` del propietario real del archivo. Auditor, verificador y usuarios ajenos no adquieren permiso de lectura. Una vez activado el titular, una nueva solicitud administrativa de revisión se deniega.
+
+Cada consulta administrativa de un archivo de identidad existente registra `IDENTIDAD_CONSULTADA` con referencia interna al administrador, archivo, fecha y resultado (`EXITO`, `DENEGADO` o `ERROR`). La auditoría se realiza dentro de `readAuthorizedFile`, una sola vez por solicitud, antes de entregar los bytes. Si el registro obligatorio falla, GET responde `500 AUDITORIA_NO_DISPONIBLE` sin entregar el documento. No se guardan el contenido, nombres personales, correos, cédulas ni rutas en esos eventos. El acceso del titular a su propio documento no constituye una consulta administrativa.
+
+La revisión documental de una cuenta pendiente no tiene el límite de tres segundos: RN-077 reserva ese límite para el futuro acceso a identidades vinculadas con seudónimos, que continúa fuera del alcance implementado. El cotejo de datos y la decisión de activar corresponden al flujo de Christian; esta actualización de Jonathan incorpora permisos y auditoría. El [contrato de integración para Christian](docs/identidad-revision-cuentas.md) describe la evidencia persistida y los motivos seguros disponibles.
+
 `deleteFilesForDraft(articleId, ownerId)` exige un borrador propio sin revisiones ni subastas y bloquea el artículo durante la comprobación. Elimina binarios y registros antes de que el módulo de artículos elimine el artículo. Los archivos ya ausentes permiten reintentar. El filesystem y PostgreSQL no comparten una transacción: si un borrado parcial o el commit falla, algunos binarios pueden quedar ausentes aunque el registro persista; el reintento completa la limpieza.
 
-`writeAuditEvent` registra actor interno, acción, recurso, resultado y fecha. Elimina recursivamente campos sensibles; conserva números, booleanos y estados conocidos, y sustituye texto libre por `[REDACTADO]` para impedir PII bajo claves genéricas. Los códigos de acción/recurso/resultado y los identificadores deben ser códigos técnicos, nunca datos personales. Las altas y eliminaciones de archivos registran auditoría en la misma transacción Prisma; un fallo del registro impide devolver éxito.
+`writeAuditEvent` registra actor interno, acción, recurso, resultado y fecha. Elimina recursivamente campos sensibles; conserva números, booleanos, estados conocidos y los motivos del catálogo cerrado `auditReasonSchema`, y sustituye texto libre por `[REDACTADO]` para impedir PII bajo claves genéricas. Los códigos de acción/recurso/resultado y los identificadores deben ser códigos técnicos, nunca datos personales. Las altas y eliminaciones de archivos registran auditoría en la misma transacción Prisma; un fallo del registro impide devolver éxito.
 
 `GET /api/audit?page=1&pageSize=20&action=ARCHIVO_CREADO` y `/auditoria` son exclusivos de cuentas `AUDITOR` activas. La página ofrece filtro por acción, paginación y tabla con resultados; la API admite de 1 a 100 eventos por página, ordenados por fecha descendente y desempate por ID. No se consultan relaciones de usuarios ni se devuelve la identidad del actor. También se sanitiza `detail` al leer eventos antiguos.
 
-`src/tests/infra.test.ts` cubre firmas reales, límites, EXIF, permisos por tipo/estado/rol, compensación al fallar Prisma o auditoría, borrado protegido, privacidad y contratos HTTP. Las pruebas de infraestructura usan Prisma y disco simulados; no sustituyen las migraciones o pruebas manuales con PostgreSQL.
+`src/tests/infra.test.ts` cubre firmas reales, límites, EXIF, permisos por tipo/estado/rol, compensación al fallar Prisma o auditoría, borrado protegido, privacidad y contratos HTTP. Incluye revisión de cuentas pendientes, permisos administrativos revalidados, consultas auditadas, bloqueo tras activación y errores de auditoría sin entrega del documento. Las pruebas de infraestructura usan Prisma y disco simulados; no sustituyen las migraciones o pruebas manuales con PostgreSQL.
 
 ## 10. Ejecución con Docker
 
