@@ -65,8 +65,8 @@ export default function AccountReview({ userId, onClose, onActivated }: { userId
         // El blob procede exclusivamente del endpoint protegido, sin URL pública ni optimización externa.
         // eslint-disable-next-line @next/next/no-img-element
         <img src={review.objectUrl} alt="Documento de identidad ficticio para revisión" className="max-h-96 w-full object-contain" /> :
-        <iframe src={review.objectUrl} title="Documento de identidad ficticio para revisión" sandbox="" className="h-96 w-full border" />}
-      <a href={`/api/files/${review.identity.id}`} target="_blank" rel="noopener noreferrer" className="pf-btn-secondary">Abrir documento protegido en otra pestaña</a>
+        <p>Documento PDF disponible. Ábrelo en otra pestaña para cotejarlo con los datos registrados.</p>}
+      <a href={`/api/files/${review.identity.id}`} target="_blank" rel="noopener noreferrer" className="pf-btn-secondary">{review.identity.mimeType === "application/pdf" ? "Abrir PDF protegido en otra pestaña" : "Abrir documento protegido en otra pestaña"}</a>
       <fieldset disabled={busy} className="space-y-3">
         <label className="flex gap-2"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />He revisado el documento y comprobado su coherencia con los datos registrados.</label>
         <div><label htmlFor="approval-reason" className="pf-label">Motivo de aprobación</label><select id="approval-reason" className="pf-input" value={reason} onChange={(event) => setReason(event.target.value)}><option value="">Selecciona un motivo</option><option value={APPROVAL_REASON}>Datos registrados coherentes con el documento revisado</option></select></div>

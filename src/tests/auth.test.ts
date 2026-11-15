@@ -239,7 +239,7 @@ describe("Christian C1 — revisión documental con dependencias J2 simuladas", 
     expect(writeAuditEvent).not.toHaveBeenCalled(); expect(db.user.update).not.toHaveBeenCalled();
   });
   it("sin sesión no revela los datos", async () => {
-    expect((await reviewAccount(new Request("http://localhost:3000/api/admin/users/otro/review"), context)).status).toBe(401);
+    expect((await reviewAccount(new Request("http://localhost:3000/api/admin/users/otro"), context)).status).toBe(401);
   });
   it("sin documento no se abre revisión ni se activa; activa no puede revisarse", async () => {
     db.user.findUnique.mockResolvedValue({ ...pending(), files: [] });

@@ -1,5 +1,6 @@
 /** C1 real: npm run dev, luego node --env-file=.env --import tsx src/tests/auth-c1.integration.ts.
  * Usa únicamente fixtures ficticios propios y los elimina en finally.
+ * C1_IDENTITY_FORMAT=pdf repite el flujo con PDF; por defecto utiliza PNG.
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -21,6 +22,21 @@ const origin = "http://localhost:3000";
 const emails: string[] = [];
 const password = "Frase ficticia para probar cuentas 2026!";
 const newPassword = "Una nueva frase extensa para mi cuenta!";
+const identityFormat = process.env.C1_IDENTITY_FORMAT === "pdf" ? "pdf" : "png";
+function fictitiousPdf(): Buffer {
+  const content = "BT /F1 20 Tf 50 760 Td (IDENTIDAD FICTICIA C1) Tj 0 -45 Td (Registro ficticio C1) Tj 0 -35 Td (1234567890) Tj ET";
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${index + 1} 0 obj\n${object}\nendobj\n`; });
+  const xref = Buffer.byteLength(pdf);
+  pdf += `xref\n0 6\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(pdf);
+}
 let phase = "inicio";
 const call = (url: string, method = "GET", body?: unknown, cookie?: string) => fetch(`${origin}${url}`, {
   method, redirect: "manual", signal: AbortSignal.timeout(30000),
@@ -38,20 +54,23 @@ async function login(email: string, secret = password) {
 }
 async function main() {
   try {
+    assert.equal((await call("/api/admin/users/prueba/review")).status, 404);
     const admin = await fixture("ADMIN_SUBASTAS"), buyer = await fixture("COMPRADOR"), auditor = await fixture("AUDITOR"), verifier = await fixture("VERIFICADOR");
     const noIdentity = await fixture("VENDEDOR", "PENDIENTE");
     const adminCookie = await login(admin.email), buyerCookie = await login(buyer.email), auditorCookie = await login(auditor.email), verifierCookie = await login(verifier.email);
     const approval = (reviewId = "sin-revision", documentoRevisadoId = "sin-documento") => ({ reviewId, documentoRevisadoId, coherenciaConfirmada: true as const, motivoCodigo: APPROVAL_REASON });
     phase = "registro real con identidad privada";
     const email = `c1-${randomUUID()}@example.test`; emails.push(email);
-    const image = await sharp({ create: { width: 8, height: 8, channels: 3, background: "navy" } }).png().toBuffer();
+    const image = identityFormat === "pdf" ? fictitiousPdf() : await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="320"><rect width="640" height="320" fill="#1F3A5F"/><g font-family="Arial" font-size="28" fill="white"><text x="32" y="70">IDENTIDAD FICTICIA C1</text><text x="32" y="145">Registro ficticio C1</text><text x="32" y="210">1234567890</text></g></svg>')).png().toBuffer();
     const form = new FormData();
     for (const [key, value] of Object.entries({ nombreCompleto: "Registro ficticio C1", email, password, cedula: "1234567890", roles: JSON.stringify(["COMPRADOR", "VENDEDOR"]) })) form.set(key, value);
-    form.set("identidad", new File([new Uint8Array(image)], "identidad.png", { type: "image/png" }));
+    const identityMime = identityFormat === "pdf" ? "application/pdf" : "image/png";
+    form.set("identidad", new File([new Uint8Array(image)], `identidad.${identityFormat}`, { type: identityMime }));
     assert.equal((await call("/api/auth/register", "POST", form)).status, 201);
     const registered = await prisma.user.findUniqueOrThrow({ where: { email }, include: { files: true } });
     assert.equal(registered.status, "PENDIENTE"); assert.notEqual(registered.cedulaCifrada, "1234567890");
     assert.equal(registered.files.length, 1); assert.equal(registered.files[0].kind, "IDENTIDAD");
+    assert.equal(registered.files[0].mimeType, identityMime);
     assert.ok(registered.files[0].storagePath.startsWith(path.join("storage", "private")));
     let cookie = await login(email);
     assert.equal((await call("/api/articles", "POST", {}, cookie)).status, 403);
@@ -61,7 +80,14 @@ async function main() {
     assert.equal((await call(fileUrl)).status, 403);
     assert.equal((await call(`/api/files/${randomUUID()}`, "GET", undefined, adminCookie)).status, 404);
     assert.equal((await call(fileUrl, "GET", undefined, cookie)).status, 200);
-    assert.equal((await call(fileUrl, "GET", undefined, adminCookie)).status, 200);
+    const documentResponse = await call(fileUrl, "GET", undefined, adminCookie);
+    assert.equal(documentResponse.status, 200);
+    assert.equal(documentResponse.headers.get("content-type"), identityMime);
+    assert.ok(documentResponse.headers.get("content-disposition")?.startsWith("inline;"));
+    const documentBytes = Buffer.from(await documentResponse.arrayBuffer());
+    if (identityFormat === "pdf") assert.equal(documentBytes.subarray(0, 5).toString(), "%PDF-");
+    else assert.equal((await sharp(documentBytes).metadata()).format, "png");
+    console.log(`PASS documento ${identityFormat.toUpperCase()}: bytes reales y entrega inline protegida.`);
     console.log("PASS registro: pendiente, cifrado, documento privado; operaciones pendientes bloqueadas por guard compartido.");
     phase = "autorización y aprobación";
     assert.equal((await call("/api/admin/users")).status, 401);
