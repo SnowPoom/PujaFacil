@@ -5,6 +5,7 @@ import { FileKind, type Role } from "@prisma/client";
 
 const db = vi.hoisted(() => ({
   fileRecord: { findUnique: vi.fn(), create: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn() },
+  user: { findUnique: vi.fn() },
   article: { findFirst: vi.fn() }, review: { findFirst: vi.fn() },
   auditEvent: { create: vi.fn(), findMany: vi.fn(), count: vi.fn() },
   session: { findUnique: vi.fn() }, $transaction: vi.fn(), $queryRaw: vi.fn(),
@@ -14,7 +15,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: db }));
 vi.mock("node:fs/promises", () => disk);
 
 import { deleteFilesForDraft, readAuthorizedFile, saveValidatedUpload, validateUpload } from "@/lib/uploads";
-import { listAuditEvents, writeAuditEvent } from "@/lib/audit";
+import { auditReasonSchema, listAuditEvents, writeAuditEvent } from "@/lib/audit";
 import { POST as upload } from "@/app/api/files/route";
 import { GET as download } from "@/app/api/files/[id]/route";
 import { GET as audit } from "@/app/api/audit/route";
@@ -24,7 +25,11 @@ const token = "a".repeat(64);
 const cookie = `pf_session=${token}`;
 const user = { id: "titular", nombreCompleto: "Persona Ficticia", email: "demo@example.test", status: "ACTIVA", roles: [{ role: "VENDEDOR" }] };
 const event = { id: "evento", action: "ARCHIVO_CREADO", resourceType: "FileRecord", resourceId: "archivo", result: "EXITO", detail: {}, createdAt: new Date("2026-11-15T17:00:00Z") };
-const record = { id: "archivo", ownerId: "titular", articleId: "articulo", kind: FileKind.FOTO, mimeType: "image/png", originalName: "nombre-privado.png", storagePath: path.join("storage", "private", "ficticio"), size: 100, createdAt: event.createdAt, article: { status: "BORRADOR" } };
+const record = { id: "archivo", ownerId: "titular", articleId: "articulo", kind: FileKind.FOTO, mimeType: "image/png", originalName: "nombre-privado.png", storagePath: path.join("storage", "private", "ficticio"), size: 100, createdAt: event.createdAt, article: { status: "BORRADOR" }, owner: { status: "PENDIENTE" } };
+const administrator = { ...user, id: "admin", roles: [{ role: "ADMIN_SUBASTAS" }] };
+const identityRecord = { ...record, kind: FileKind.IDENTIDAD, articleId: null, article: null };
+const identityReview = { fileId: "archivo", requesterId: "admin", roles: ["ADMIN_SUBASTAS"] as Role[] };
+const downloadIdentity = () => download(new Request("http://localhost:3000/api/files/archivo", { headers: { cookie } }), { params: Promise.resolve({ id: "archivo" }) });
 const png = () => sharp({ create: { width: 4, height: 4, channels: 3, background: "navy" } }).png().toBuffer();
 const imageFile = async (name = "foto.png", type = "image/png") => new File([new Uint8Array(await png())], name, { type });
 const fileRequest = (form: FormData, headers: Record<string, string> = {}) => new Request("http://localhost:3000/api/files", { method: "POST", headers: { origin: "http://localhost:3000", cookie, ...headers }, body: form });
@@ -39,12 +44,147 @@ beforeEach(() => {
   db.$transaction.mockImplementation(async (input) => typeof input === "function" ? input(db) : Promise.all(input));
   db.fileRecord.findUnique.mockResolvedValue(record);
   db.fileRecord.create.mockResolvedValue(record);
+  db.user.findUnique.mockResolvedValue(administrator);
   db.article.findFirst.mockResolvedValue({ id: "articulo" });
   db.auditEvent.create.mockResolvedValue(event);
   db.auditEvent.findMany.mockResolvedValue([event]);
   db.auditEvent.count.mockResolvedValue(1);
   db.session.findUnique.mockResolvedValue({ user, expiresAt: new Date(Date.now() + 60_000) });
   disk.readFile.mockResolvedValue(Buffer.from("contenido ficticio"));
+});
+
+describe("Jonathan v2 — revisión documental de cuentas pendientes", () => {
+  beforeEach(() => {
+    db.fileRecord.findUnique.mockResolvedValue(identityRecord);
+    db.session.findUnique.mockResolvedValue({ user: administrator, expiresAt: new Date(Date.now() + 60_000) });
+  });
+
+  it("permite al administrador activo leer identidad de una cuenta pendiente y audita sin PII", async () => {
+    const response = await downloadIdentity();
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("contenido ficticio");
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(response.headers.get("Content-Disposition")).toBe('inline; filename="archivo.png"');
+    expect(db.auditEvent.create).toHaveBeenCalledExactlyOnceWith({ data: {
+      actorId: "admin", action: "IDENTIDAD_CONSULTADA", resourceType: "FileRecord",
+      resourceId: "archivo", result: "EXITO", detail: { kind: "IDENTIDAD" },
+    } });
+    expect(disk.readFile.mock.invocationCallOrder[0]).toBeLessThan(db.auditEvent.create.mock.invocationCallOrder[0]);
+    expect(JSON.stringify(db.auditEvent.create.mock.calls[0][0])).not.toMatch(/nombreCompleto|email|cedula|storagePath|originalName|Persona|demo@example|contenido ficticio/);
+  });
+
+  it.each(["ACTIVA", "SUSPENDIDA", "CERRADA"])("deniega revisión de titular %s y registra el intento sin leer el disco", async (status) => {
+    db.fileRecord.findUnique.mockResolvedValue({ ...identityRecord, owner: { status } });
+    const response = await downloadIdentity();
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ ok: false, error: { code: "ARCHIVO_NO_PERMITIDO" } });
+    expect(disk.readFile).not.toHaveBeenCalled();
+    expect(db.auditEvent.create).toHaveBeenCalledExactlyOnceWith({ data: {
+      actorId: "admin", action: "IDENTIDAD_CONSULTADA", resourceType: "FileRecord",
+      resourceId: "archivo", result: "DENEGADO", detail: { kind: "IDENTIDAD", motivoCodigo: "REVISION_NO_PERMITIDA" },
+    } });
+  });
+
+  it.each(["PENDIENTE", "SUSPENDIDA", "CERRADA"])("revalida en DB el estado %s del administrador aunque la sesión diga ACTIVA", async (status) => {
+    db.user.findUnique.mockResolvedValue({ ...administrator, status });
+    expect((await downloadIdentity()).status).toBe(403);
+    expect(disk.readFile).not.toHaveBeenCalled();
+    expect(db.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ result: "DENEGADO" }) }));
+  });
+
+  it.each([
+    ["COMPRADOR"], ["AUDITOR"], ["VERIFICADOR"], [], ["ADMIN_SUBASTAS", "AUDITOR"],
+  ] as Role[][])("no usa un rol administrativo revocado o inválido en DB: %j", async (...roles) => {
+    db.user.findUnique.mockResolvedValue({ ...administrator, roles: roles.map((role) => ({ role })) });
+    expect((await downloadIdentity()).status).toBe(403);
+    expect(disk.readFile).not.toHaveBeenCalled();
+  });
+
+  it("no permite un administrador que ya no existe en DB", async () => {
+    db.user.findUnique.mockResolvedValue(null);
+    await expect(readAuthorizedFile(identityReview)).rejects.toMatchObject({ status: 403 });
+    expect(disk.readFile).not.toHaveBeenCalled();
+  });
+
+  it.each(["AUDITOR", "VERIFICADOR", "COMPRADOR"])("deniega identidad ajena al rol %s incluso con revisión de artículo asignada", async (role) => {
+    db.session.findUnique.mockResolvedValue({ user: { ...user, id: "ajeno", roles: [{ role }] }, expiresAt: new Date(Date.now() + 60_000) });
+    db.review.findFirst.mockResolvedValue({ id: "revision" });
+    expect((await downloadIdentity()).status).toBe(403);
+    expect(disk.readFile).not.toHaveBeenCalled();
+    expect(db.review.findFirst).not.toHaveBeenCalled();
+    expect(db.auditEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("el titular pendiente puede consultar su identidad sin permiso administrativo", async () => {
+    db.session.findUnique.mockResolvedValue({ user: { ...user, status: "PENDIENTE" }, expiresAt: new Date(Date.now() + 60_000) });
+    expect((await downloadIdentity()).status).toBe(200);
+    expect(db.auditEvent.create).not.toHaveBeenCalled();
+    expect(db.user.findUnique).not.toHaveBeenCalled();
+  });
+
+  it.each(["ausente", "vencida", "suspendida", "cerrada"])("no entrega identidad con sesión %s", async (state) => {
+    db.session.findUnique.mockResolvedValue(state === "ausente" ? null : {
+      user: { ...administrator, status: state === "suspendida" ? "SUSPENDIDA" : state === "cerrada" ? "CERRADA" : "ACTIVA" },
+      expiresAt: new Date(Date.now() + (state === "vencida" ? -60_000 : 60_000)),
+    });
+    expect((await downloadIdentity()).status).toBe(403);
+    expect(disk.readFile).not.toHaveBeenCalled();
+  });
+
+  it("revalida el estado del titular cuando se vuelve a consultar después de activarlo", async () => {
+    expect((await downloadIdentity()).status).toBe(200);
+    db.fileRecord.findUnique.mockResolvedValue({ ...identityRecord, owner: { status: "ACTIVA" } });
+    expect((await downloadIdentity()).status).toBe(403);
+    expect(disk.readFile).toHaveBeenCalledOnce();
+    expect(db.auditEvent.create.mock.calls.map(([input]) => input.data.result)).toEqual(["EXITO", "DENEGADO"]);
+  });
+
+  it("el permiso depende del propietario real del archivo, no de parámetros de revisión enviados por el cliente", async () => {
+    db.fileRecord.findUnique.mockResolvedValue({ ...identityRecord, ownerId: "otra-cuenta", owner: { status: "ACTIVA" } });
+    const response = await download(new Request("http://localhost:3000/api/files/archivo?ownerId=titular&status=PENDIENTE&purpose=revision", { headers: { cookie } }), { params: Promise.resolve({ id: "archivo" }) });
+    expect(response.status).toBe(403);
+    expect(disk.readFile).not.toHaveBeenCalled();
+  });
+
+  it("audita cada solicitud una sola vez, también cuando se llama directamente al helper", async () => {
+    await readAuthorizedFile(identityReview);
+    await downloadIdentity();
+    expect(db.auditEvent.create).toHaveBeenCalledTimes(2);
+    expect(db.auditEvent.create.mock.calls.every(([input]) => input.data.result === "EXITO")).toBe(true);
+  });
+
+  it("no inventa un evento de identidad para un ID de archivo inexistente", async () => {
+    db.fileRecord.findUnique.mockResolvedValue(null);
+    expect((await downloadIdentity()).status).toBe(404);
+    expect(db.auditEvent.create).not.toHaveBeenCalled();
+    expect(disk.readFile).not.toHaveBeenCalled();
+  });
+
+  it.each(["ausente", "ruta-invalida"])("audita ERROR cuando el binario está %s y no filtra rutas", async (failure) => {
+    if (failure === "ausente") disk.readFile.mockRejectedValue(new Error("storage/private/ruta-secreta"));
+    else db.fileRecord.findUnique.mockResolvedValue({ ...identityRecord, storagePath: ".env" });
+    const response = await downloadIdentity();
+    expect(response.status).toBe(404);
+    expect(JSON.stringify(await response.json())).not.toMatch(/storage|ruta-secreta|\.env/);
+    expect(db.auditEvent.create).toHaveBeenCalledExactlyOnceWith({ data: {
+      actorId: "admin", action: "IDENTIDAD_CONSULTADA", resourceType: "FileRecord",
+      resourceId: "archivo", result: "ERROR", detail: { kind: "IDENTIDAD", motivoCodigo: "DOCUMENTO_NO_DISPONIBLE" },
+    } });
+  });
+
+  it.each(["EXITO", "DENEGADO", "ERROR"])("si falla el registro de %s, devuelve 500 sin documento ni error de Prisma", async (result) => {
+    if (result === "DENEGADO") db.fileRecord.findUnique.mockResolvedValue({ ...identityRecord, owner: { status: "ACTIVA" } });
+    if (result === "ERROR") disk.readFile.mockRejectedValue(new Error("ruta-secreta"));
+    db.auditEvent.create.mockRejectedValue(new Error("email=privado@example.test password=secreto"));
+    const response = await downloadIdentity();
+    expect(response.status).toBe(500);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(await response.json()).toEqual({ ok: false, error: {
+      code: "AUDITORIA_NO_DISPONIBLE", message: "No se pudo registrar la consulta. Inténtalo más tarde.",
+    } });
+    expect(db.auditEvent.create).toHaveBeenCalledOnce();
+    if (result === "DENEGADO") expect(disk.readFile).not.toHaveBeenCalled();
+  });
 });
 
 describe("Jonathan J2 — validación real de archivos", () => {
@@ -198,6 +338,13 @@ describe("Jonathan J2 — almacenamiento y borrado", () => {
 });
 
 describe("Jonathan J2 — auditoría y privacidad", () => {
+  it.each(auditReasonSchema.options)("conserva el motivo seguro %s y sigue redactando texto libre anidado", async (motivoCodigo) => {
+    await writeAuditEvent({ actorId: "admin", action: "CUENTA_ACTIVADA", resourceType: "User", resourceId: "cuenta", result: "EXITO", detail: {
+      motivoCodigo, nested: { motivoCodigo, observations: "Persona Ficticia, privado@example.test", cedula: "1234567890" },
+    } });
+    expect(db.auditEvent.create.mock.calls[0][0].data.detail).toEqual({ motivoCodigo, nested: { motivoCodigo, observations: "[REDACTADO]" } });
+    expect(auditReasonSchema.safeParse("privado@example.test").success).toBe(false);
+  });
   it("elimina campos sensibles recursivamente, normaliza claves y oculta texto libre", async () => {
     const detail = { password: "privado", email: "demo@example.test", cedula: "1234567890", cedulaCifrada: "cifrado", accessToken: "privado", Cookie: "privado", api_secret: "privado", nombreCompleto: "Persona", teléfono: "123", originalName: "cedula.pdf", count: 2, status: "ACTIVA", enabled: true, nested: { cookies: "privado", result: "EXITO", arbitrary: "demo@example.test" }, items: [{ contraseña: "privado", status: "BORRADOR" }] };
     await writeAuditEvent({ actorId: "titular", action: "CUENTA_ACTIVADA", resourceType: "User", resourceId: "cuenta", result: "EXITO", detail });

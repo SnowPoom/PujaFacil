@@ -10,10 +10,17 @@ export class AuditError extends Error {
 }
 
 const sensitiveKey = /password|passwd|contrasena|cedula|email|correo|token|cookie|secret|nombre|name|telefono|phone|direccion|address|document|authorization|storagepath/i;
+export const auditReasonSchema = z.enum([
+  "REVISION_DOCUMENTAL_COHERENTE", "REVISION_INCOMPLETA",
+  "DOCUMENTO_NO_DISPONIBLE", "REVISION_NO_PERMITIDA",
+]);
+export type AuditReasonCode = z.infer<typeof auditReasonSchema>;
+
 const safeValues = new Set<string>([
   ...Object.values(AccountStatus), ...Object.values(ArticleStatus),
   ...Object.values(AuctionStatus), ...Object.values(FileKind), ...Object.values(Role),
   "EXITO", "ERROR", "DENEGADO", "SUCCESS", "FAILURE", "OK",
+  ...auditReasonSchema.options,
 ]);
 
 /** Solo estados conocidos y valores estructurados; el texto libre puede contener PII. */
