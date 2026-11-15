@@ -1,6 +1,7 @@
 import { getUserFromCookieHeader } from "@/lib/auth/session";
 import { authErrorResponse } from "@/lib/auth/http";
 import { readAuthorizedFile, UploadError } from "@/lib/uploads";
+import { AuditError } from "@/lib/audit";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
   try {
@@ -21,6 +22,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     } });
   } catch (error) {
     if (error instanceof UploadError) return Response.json({ ok: false, error: { code: error.code, message: error.message } }, { status: error.status, headers: { "Cache-Control": "no-store" } });
-    return authErrorResponse(error);
+    if (error instanceof AuditError) return Response.json({ ok: false, error: { code: "AUDITORIA_NO_DISPONIBLE", message: "No se pudo registrar la consulta. Inténtalo más tarde." } }, { status: 500, headers: { "Cache-Control": "no-store" } });
+    const response = authErrorResponse(error);
+    response.headers.set("Cache-Control", "no-store");
+    return response;
   }
 }

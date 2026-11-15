@@ -5,7 +5,8 @@ import { FileKind, type FileRecord, type Role } from "@prisma/client";
 import { fileTypeFromBuffer } from "file-type";
 import sharp from "sharp";
 import { prisma } from "@/lib/prisma";
-import { writeAuditEvent } from "@/lib/audit";
+import { writeAuditEvent, type AuditReasonCode } from "@/lib/audit";
+import { hasValidRoles } from "@/lib/auth/roles";
 
 export class UploadError extends Error {
   constructor(public readonly status: number, public readonly code: string, message: string) {
@@ -110,12 +111,35 @@ export async function readAuthorizedFile(options: {
   fileId: string; requesterId?: string; roles?: Role[];
 }): Promise<{ buffer: Buffer; mimeType: string; originalName: string }> {
   const record = await prisma.fileRecord.findUnique({
-    where: { id: options.fileId }, include: { article: { select: { status: true } } },
+    where: { id: options.fileId },
+    include: { article: { select: { status: true } }, owner: { select: { status: true } } },
   });
   if (!record) throw new UploadError(404, "ARCHIVO_NO_ENCONTRADO", "El archivo no está disponible.");
   const isOwner = Boolean(options.requesterId && record.ownerId === options.requesterId);
   const isAdmin = Boolean(options.requesterId && options.roles?.includes("ADMIN_SUBASTAS"));
+  const isIdentityReview = record.kind === FileKind.IDENTIDAD && isAdmin && !isOwner;
+  const auditIdentityRead = async (result: "EXITO" | "DENEGADO" | "ERROR", motivoCodigo?: AuditReasonCode) => {
+    if (!isIdentityReview) return;
+    await writeAuditEvent({
+      actorId: options.requesterId, action: "IDENTIDAD_CONSULTADA",
+      resourceType: "FileRecord", resourceId: record.id, result,
+      detail: { kind: record.kind, ...(motivoCodigo ? { motivoCodigo } : {}) },
+    });
+  };
   let allowed = isOwner || isAdmin;
+  if (record.kind === FileKind.IDENTIDAD) {
+    allowed = isOwner;
+    if (isIdentityReview) {
+      // La sesión identifica al solicitante; confirmar sus permisos actuales en DB.
+      const administrator = await prisma.user.findUnique({
+        where: { id: options.requesterId! },
+        select: { status: true, roles: { select: { role: true } } },
+      });
+      const roles = administrator?.roles.map(({ role }) => role) ?? [];
+      allowed = administrator?.status === "ACTIVA" && hasValidRoles(roles)
+        && roles.includes("ADMIN_SUBASTAS") && record.owner.status === "PENDIENTE";
+    }
+  }
   if (!allowed && record.kind !== FileKind.IDENTIDAD) {
     allowed = record.kind === FileKind.FOTO && ["APROBADO", "ASOCIADO_SUBASTA"].includes(record.article?.status ?? "");
     if (!allowed && options.requesterId && options.roles?.includes("VERIFICADOR") && record.articleId) {
@@ -124,12 +148,20 @@ export async function readAuthorizedFile(options: {
       }));
     }
   }
-  if (!allowed) throw new UploadError(403, "ARCHIVO_NO_PERMITIDO", "No tienes permiso para consultar este archivo.");
+  if (!allowed) {
+    await auditIdentityRead("DENEGADO", "REVISION_NO_PERMITIDA");
+    throw new UploadError(403, "ARCHIVO_NO_PERMITIDO", "No tienes permiso para consultar este archivo.");
+  }
+  let buffer: Buffer;
   try {
-    return { buffer: await readFile(privatePath(record.storagePath)), mimeType: record.mimeType, originalName: safeName(record.mimeType) };
+    buffer = await readFile(privatePath(record.storagePath));
   } catch {
+    await auditIdentityRead("ERROR", "DOCUMENTO_NO_DISPONIBLE");
     throw new UploadError(404, "ARCHIVO_NO_ENCONTRADO", "El archivo no está disponible.");
   }
+  // Auditar antes de entregar bytes. Un fallo de auditoría no es un fallo de disco.
+  await auditIdentityRead("EXITO");
+  return { buffer, mimeType: record.mimeType, originalName: safeName(record.mimeType) };
 }
 
 export async function deleteFilesForDraft(articleId: string, ownerId: string): Promise<number> {
