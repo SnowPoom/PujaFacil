@@ -73,16 +73,34 @@ async function main() {
     assert.equal((await call(`/api/admin/users/${registered.id}/activate`, "POST", {}, adminCookie)).status, 409);
     assert.equal((await requireActive(new Request(`${origin}/api/test`, { headers: { Cookie: cookie } }))).status, "ACTIVA");
     assert.equal(await prisma.auditEvent.count({ where: { actorId: admin.id, resourceId: registered.id, action: "CUENTA_ACTIVADA" } }), 1);
+    const registrationAudit = await prisma.auditEvent.findFirstOrThrow({ where: { actorId: registered.id, action: "CUENTA_REGISTRADA", result: "EXITO" } });
+    assert.deepEqual(registrationAudit.detail, { roles: ["COMPRADOR", "VENDEDOR"], status: "PENDIENTE" });
     console.log("PASS activación: admin exclusivamente, documento requerido, transición única y auditoría persistida.");
     phase = "perfil del titular";
     assert.equal((await call("/api/auth/profile", "PATCH", { telefono: "0990000000", direccion: "Calle ficticia C1" }, cookie)).status, 200);
     assert.equal((await call("/api/auth/profile", "PATCH", { status: "ACTIVA", roles: ["ADMIN_SUBASTAS"] }, cookie)).status, 400);
     assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: buyer.id } })).telefono, null);
     assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: registered.id } })).telefono, "0990000000");
-    for (const url of ["/perfil", "/admin/usuarios", "/recuperar-clave", "/restablecer-clave"]) assert.equal((await call(url, "GET", undefined, url === "/admin/usuarios" ? adminCookie : cookie)).status, 200);
+    for (const url of ["/perfil", "/admin/usuarios", "/recuperar-clave", "/restablecer-clave"]) {
+      const page = await call(url, "GET", undefined, url === "/admin/usuarios" ? adminCookie : cookie);
+      assert.equal(page.status, 200);
+      const html = await page.text();
+      for (const secret of ["passwordHash", "cedulaCifrada", "tokenHash", registered.passwordHash, registered.cedulaCifrada]) assert.ok(!html.includes(secret));
+    }
+    const deniedPage = await call("/admin/usuarios", "GET", undefined, buyerCookie);
+    const deniedHtml = await deniedPage.text();
+    assert.ok(deniedHtml.includes("Acceso restringido"));
+    assert.ok(!deniedHtml.includes("Cuentas para aprobación"));
     console.log("PASS perfil propio, campos restringidos y páginas C1 renderizadas.");
     phase = "recuperación por token emitido en desarrollo";
     const absent = await call("/api/auth/forgot-password", "POST", { email: `ausente-${randomUUID()}@example.test` });
+    const existing = await call("/api/auth/forgot-password", "POST", { email });
+    assert.equal(existing.status, 200);
+    const genericBody = await existing.json();
+    assert.deepEqual(genericBody, await absent.json());
+    const httpReset = await prisma.passwordReset.findFirstOrThrow({ where: { userId: registered.id, usedAt: null }, orderBy: { createdAt: "desc" } });
+    assert.match(httpReset.tokenHash, /^[a-f\d]{64}$/);
+    assert.ok(Math.abs(httpReset.expiresAt.getTime() - Date.now() - 600000) < 10000);
     let link = "";
     const env: Record<string, string | undefined> = process.env;
     const savedLog = console.log, mode = env.NODE_ENV;
@@ -92,7 +110,7 @@ async function main() {
       console.log = (value: unknown) => { if (typeof value === "string" && value.startsWith("[auth] Recuperación: ")) link = value.slice("[auth] Recuperación: ".length); };
       recovery = await forgot(new Request(`${origin}/api/auth/forgot-password`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ email }) }));
     } finally { console.log = savedLog; if (mode === undefined) delete env.NODE_ENV; else env.NODE_ENV = mode; }
-    assert.equal(recovery!.status, 200); assert.deepEqual(await recovery!.json(), await absent.json());
+    assert.equal(recovery!.status, 200); assert.deepEqual(await recovery!.json(), genericBody);
     const rawToken = new URL(link).searchParams.get("token")!;
     const stored = await prisma.passwordReset.findUniqueOrThrow({ where: { tokenHash: hashToken(rawToken) } });
     assert.ok(Math.abs(stored.expiresAt.getTime() - Date.now() - 600000) < 10000);
@@ -105,6 +123,7 @@ async function main() {
     assert.equal(await prisma.session.count({ where: { userId: registered.id } }), 0);
     assert.equal((await call("/api/auth/me", "GET", undefined, cookie)).status, 401);
     assert.equal((await call("/api/auth/reset-password", "POST", { token: rawToken, newPassword })).status, 400);
+    assert.notEqual((await prisma.passwordReset.findUniqueOrThrow({ where: { id: httpReset.id } })).usedAt, null);
     assert.equal((await call("/api/auth/login", "POST", { email, password })).status, 401);
     cookie = await login(email, newPassword);
     assert.equal((await call("/api/auth/me", "GET", undefined, cookie)).status, 200);
@@ -112,6 +131,11 @@ async function main() {
     console.log("PASS recuperación real: hash, 10 minutos, caducidad, dos consumos concurrentes, no reutilización y revocación de todas las sesiones.");
     const events = await prisma.auditEvent.findMany({ where: { actorId: registered.id, action: "LOGIN", result: "EXITO" } });
     assert.ok(events.length >= 2);
+    const audited = await prisma.auditEvent.findMany({ where: { OR: [{ actorId: registered.id }, { resourceType: "User", resourceId: registered.id }] } });
+    for (const event of audited) {
+      const detail = JSON.stringify(event.detail);
+      for (const secret of [email, password, newPassword, rawToken, registered.cedulaCifrada, registered.passwordHash, "1234567890"]) assert.ok(!detail.includes(secret));
+    }
     console.log("PASS login auditado sin credenciales ni PII en detalle.");
   } finally {
     const users = await prisma.user.findMany({ where: { email: { in: emails } }, select: { id: true } });
@@ -130,6 +154,10 @@ async function main() {
       prisma.userRole.deleteMany({ where: { userId: { in: ids } } }),
       prisma.user.deleteMany({ where: { id: { in: ids } } }),
     ]);
+    assert.equal(await prisma.user.count({ where: { id: { in: ids } } }), 0);
+    assert.equal(await prisma.fileRecord.count({ where: { ownerId: { in: ids } } }), 0);
+    assert.equal(await prisma.passwordReset.count({ where: { userId: { in: ids } } }), 0);
+    assert.equal(await prisma.session.count({ where: { userId: { in: ids } } }), 0);
     await prisma.$disconnect();
     console.log("PASS limpieza de fixtures y documentos propios.");
   }
