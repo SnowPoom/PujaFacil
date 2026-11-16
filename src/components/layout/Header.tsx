@@ -148,7 +148,7 @@ export default function Header() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [pathname]);
 
   /* ---- Logout ---- */
   const handleLogout = useCallback(async () => {

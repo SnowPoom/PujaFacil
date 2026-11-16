@@ -1,6 +1,10 @@
 # Modelo de Datos — PujaFácil
 
-> Hito J1 · 14/11/2026 · Jonathan
+> Hito J1 / integración del 16/11/2026 · Jonathan
+
+![Modelo entidad-relación](modelo-datos.png)
+
+[SVG editable](modelo-datos.svg).
 
 ## Entidades y relaciones principales
 
@@ -64,10 +68,20 @@ User ──< AuditEvent       (actorId)
 | `AuditEvent` | `(createdAt)` | Panel de auditoría paginado |
 | `AuditEvent` | `(actorId, createdAt)` | Eventos por actor |
 | `FileRecord` | `(articleId, kind)` | Archivos por artículo y tipo |
+| `Review` | `(verifierId, status)` | Bandeja de revisión por verificador y estado |
+| `Notification` | `(userId, createdAt)` | Notificaciones cronológicas por usuario |
+
+## Unicidad y cardinalidades
+
+Además de la PK `id` de cada entidad, son únicos `User.email`, `Session.tokenHash` y `PasswordReset.tokenHash`. Las restricciones compuestas son `UserRole(userId, role)`, `Bid(auctionId, buyerId, requestId)`, `AuctionAlias(auctionId, userId)` y `AuctionAlias(auctionId, alias)`.
+
+Cada relación física del esquema es de uno a muchos: un padre puede tener `0..N` hijos, y cada hijo referencia exactamente un padre, salvo `FileRecord.articleId`, `ChatMessage.auctionId` y `AuditEvent.actorId`, que son nullable (`0..1` padre). No existen relaciones físicas uno a uno. `Session` y `PasswordReset` declaran borrado `Cascade` de sus registros al eliminar el usuario.
+
+`Auction.winnerBidId` es una referencia lógica opcional: actualmente no tiene `@relation`, FK ni unicidad declaradas hacia `Bid`. Tampoco hay una restricción única sobre `Auction.articleId`; el esquema admite varias subastas por artículo. El diagrama refleja estas restricciones reales sin añadir otras.
 
 ## Convenciones
 
-- **IDs:** `String @id @default(cuid())` — CUID2 URL-safe
+- **IDs:** `String @id @default(cuid())` — CUID v1; todas las FK son `String`, sin IDs enteros referenciales.
 - **Importes:** `Decimal @db.Decimal(12,2)` en USD; serializar siempre como `string` `"120.00"` en JSON
 - **Fechas:** `DateTime` UTC, ISO 8601 en JSON; el servidor define apertura/cierre de subastas
 - **Tokens:** almacenados como hash SHA-256; el token en claro solo viaja por cookie HTTP-only o enlace de consola

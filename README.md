@@ -46,7 +46,22 @@ El alcance previsto del primer bimestre cubre el ciclo comercial central de una 
 | Antony | Verificación y ciclo de subastas |
 | Kevin | Socket.IO, pujas, chat y notificaciones |
 
-El alcance anterior describe el producto 1B. Esta entrega J2 incorpora archivos y auditoría; los módulos comerciales de los demás integrantes se integran en sus hitos. El servidor ya admite HTTPS en el mismo proceso de Socket.IO.
+La entrega de integración del **16 de noviembre de 2026**, en la rama `jonathan`, reúne los cinco módulos: identidad y revisión de cuentas, artículos y catálogo, verificación y subastas, pujas/chat/notificaciones y servicios de archivos/auditoría. El Header compartido está incorporado al layout y consulta la sesión al cambiar de ruta para actualizar la navegación tras el acceso. Las comprobaciones automatizadas y las comprobaciones con base de datos real se distinguen en la sección 7.
+
+### Arquitectura integrada
+
+`server.ts` carga el entorno con `@next/env` antes de importar los módulos de sesión, crea **un único servidor HTTP o HTTPS**, registra una instancia de Socket.IO con `registerSocketHandlers(io)` de `src/server/socket/index.ts` y atiende App Router y `/socket.io` en el mismo puerto (3000 por defecto). Pasa `PORT` a Next.js para que la validación del origen coincida también en puertos alternativos. `npm run dev` y `npm run start` ejecutan este servidor; `next dev` y `next start` por sí solos no registran los handlers de chat.
+
+Las vistas SSR/Server Components, Route Handlers y módulos de negocio viven dentro del mismo proceso Node. Los guards validan sesión, estado, rol y origen en servidor; Prisma accede a PostgreSQL y los binarios se guardan fuera de `public/` en `storage/private/`. El navegador, la aplicación y la persistencia son las tres fronteras de confianza del diagrama.
+
+![Arquitectura del monolito y fronteras de confianza](docs/arquitectura-monolito.png)
+
+Las trece entidades y todas sus FK, restricciones únicas e índices se muestran en el modelo; el [detalle textual](docs/modelo-datos.md) facilita su consulta.
+
+![Modelo de datos: entidades, claves e índices](docs/modelo-datos.png)
+
+Las PK son `String @default(cuid())` (CUID v1) y las FK son cadenas del mismo tipo; las restricciones únicas protegen correo, tokens, roles, alias e idempotencia de pujas.<br>
+Los índices `(category, status)`, `(status, closesAt)`, `(auctionId, amount)` y `(room, createdAt)` apoyan catálogo, cierre de subastas, pujas e historial; el orden coincide con Prisma.
 
 ## 4. Requisitos Previos
 
@@ -169,6 +184,17 @@ npm.cmd test
 npm.cmd run build
 ```
 
+La suite configurada en Vitest contiene 320 pruebas unitarias y de integración que validan los servicios de autenticación, artículos, subastas, ofertas concurrentes, chat WebSocket, subidas y auditoría.
+
+Para ejecutar el build local como producción, define el entorno antes de arrancar el servidor:
+
+```powershell
+$env:NODE_ENV = "production"
+npm.cmd run start
+```
+
+En una nueva terminal de desarrollo, usa `npm.cmd run dev` sin esa variable de producción.
+
 Verificación ejecutada para J2 (15 de noviembre): lint correcto, 152 pruebas aprobadas y build de producción correcto tanto localmente como dentro de Docker. Se ejecutó el seed dos veces sobre PostgreSQL y se verificaron las siete cuentas, hashes bcrypt, descifrado de cédulas ficticias y ausencia de duplicados. Una prueba de integración en el contenedor comprobó subidas, eliminación de EXIF, permisos, borrado protegido y auditoría con la base real; también comprobó HTTPS y conexión Socket.IO con transporte WebSocket seguro en el mismo servidor. Esa comprobación de WSS valida el transporte, no los futuros handlers del chat.
 
 Verificación de la actualización de identidad v2 (15 de noviembre), después de integrar `origin/main` hasta `c374c55`: lint y build local correctos; 112 pruebas de infraestructura y 253 pruebas totales aprobadas. Las nuevas comprobaciones de permisos, consultas y fallos de auditoría usan Prisma y disco simulados. Esta actualización no añade una nueva verificación con PostgreSQL/Docker ni valida el flujo de activación pendiente de Christian.
@@ -190,7 +216,7 @@ El servidor `server.ts` soporta TLS de forma nativa sin requerir un proxy invers
    HTTPS_CERT_PATH=.certs/dev-cert.pem
    ```
 3. **Reiniciar con `npm.cmd run dev`**, abrir `https://localhost:3000/` y confiar explícitamente en el certificado local en el navegador. Si OpenSSL no está disponible, proporciona un par de certificados de desarrollo existente y ajusta las rutas. Para volver a HTTP deja ambas variables vacías; configurar solamente una detiene el servidor.
-4. Con un cliente Socket.IO conectado, abrir DevTools → Red (Network) → WS y comprobar una conexión `wss://localhost:3000/socket.io/...`. Si solo aparece polling, aún no se ha demostrado el transporte WSS. La prueba del chat y su handshake corresponde al módulo de Kevin; esta guía no constituye evidencia de esa prueba.
+4. Inicia sesión con una cuenta ficticia activa y abre `/chat` o una subasta. En DevTools → Red (Network) → WS, comprueba una conexión `wss://localhost:3000/socket.io/...`. Abre una segunda sesión en otro perfil de navegador y comprueba entrega de mensajes y presencia en la misma sala. Si solo aparece polling, aún no se ha demostrado WSS; la guía es un procedimiento, no evidencia de una prueba ejecutada.
 
 `http://localhost` permite WS sin cifrar durante desarrollo. Para acceso público se requieren HTTPS/WSS y certificados válidos. La carpeta `.certs/` está excluida en `.gitignore`: no subas claves privadas, certificados de prueba ni capturas que revelen secretos.
 
@@ -210,7 +236,7 @@ Los límites se calculan en bytes (1 MB = 1024² bytes). La validación compara 
 
 Cada consulta administrativa de un archivo de identidad existente registra `IDENTIDAD_CONSULTADA` con referencia interna al administrador, archivo, fecha y resultado (`EXITO`, `DENEGADO` o `ERROR`). La auditoría se realiza dentro de `readAuthorizedFile`, una sola vez por solicitud, antes de entregar los bytes. Si el registro obligatorio falla, GET responde `500 AUDITORIA_NO_DISPONIBLE` sin entregar el documento. No se guardan el contenido, nombres personales, correos, cédulas ni rutas en esos eventos. El acceso del titular a su propio documento no constituye una consulta administrativa.
 
-La revisión documental de una cuenta pendiente no tiene el límite de tres segundos: RN-077 reserva ese límite para el futuro acceso a identidades vinculadas con seudónimos, que continúa fuera del alcance implementado. El cotejo de datos y la decisión de activar corresponden al flujo de Christian; esta actualización de Jonathan incorpora permisos y auditoría. El [contrato de integración para Christian](docs/identidad-revision-cuentas.md) describe la evidencia persistida y los motivos seguros disponibles.
+La revisión documental de una cuenta pendiente no tiene el límite de tres segundos: RN-077 reserva ese límite para el futuro acceso a identidades vinculadas con seudónimos, que continúa fuera del alcance implementado. El cotejo y la activación se integran con el flujo de Christian en `/admin/usuarios`: la lectura administrativa auditada aporta la evidencia para decidir sobre la cuenta.
 
 `deleteFilesForDraft(articleId, ownerId)` exige un borrador propio sin revisiones ni subastas y bloquea el artículo durante la comprobación. Elimina binarios y registros antes de que el módulo de artículos elimine el artículo. Los archivos ya ausentes permiten reintentar. El filesystem y PostgreSQL no comparten una transacción: si un borrado parcial o el commit falla, algunos binarios pueden quedar ausentes aunque el registro persista; el reintento completa la limpieza.
 
@@ -222,7 +248,7 @@ La revisión documental de una cuenta pendiente no tiene el límite de tres segu
 
 ## 10. Ejecución con Docker
 
-El `Dockerfile` usa Node 24, `npm ci`, generación Prisma y build de Next.js. Arranca `npm run start` con `server.ts`, conservando Socket.IO en el mismo puerto 3000. La imagen usa copias explícitas que excluyen `.env`, certificados y archivos privados, ejecuta como usuario `node` y declara un volumen para `/app/storage/private`.
+El `Dockerfile` usa Node 24, `npm ci`, generación Prisma y build de Next.js. Arranca `npm run start` con `server.ts`, conservando Socket.IO en el mismo puerto 3000. La imagen usa copias explícitas y `.dockerignore` para excluir `.env`, certificados, archivos privados y `/agent` del contexto de construcción; ejecuta como usuario `node`. Compose espera `db: service_healthy` y monta volúmenes con nombre para PostgreSQL y `/app/storage/private`.
 
 Con `.env` configurado y Docker Desktop activo:
 
@@ -236,14 +262,14 @@ docker compose up -d web
 
 Antes del comando de seed, carga `DEMO_PASSWORD` en el entorno de PowerShell con el mismo valor ficticio de `.env`; `-e DEMO_PASSWORD` lo reenvía sin incluirlo en el comando. Compose ya pasa `ENCRYPTION_KEY_HEX` y usa `db` como host de PostgreSQL. Las migraciones y el seed son explícitos y no se ejecutan al arrancar cada contenedor.
 
-El bloque `web` original se habilitó conservando su configuración. Para disponer de un volumen de nombre estable y TLS en el contenedor sin modificar Compose, se puede ejecutar el servidor con sus opciones de runtime:
+Para activar TLS en el contenedor, usa el mismo servicio y volumen privado de Compose, montando los certificados de solo lectura:
 
 ```powershell
 docker compose stop web
-docker compose run --rm --service-ports --name pujafacil_web_tls -v pujafacil_private:/app/storage/private -v "${PWD}/.certs:/app/.certs:ro" -e HTTPS_KEY_PATH=/app/.certs/dev-key.pem -e HTTPS_CERT_PATH=/app/.certs/dev-cert.pem web
+docker compose run --rm --service-ports --name pujafacil_web_tls -v "${PWD}/.certs:/app/.certs:ro" -e HTTPS_KEY_PATH=/app/.certs/dev-key.pem -e HTTPS_CERT_PATH=/app/.certs/dev-cert.pem web
 ```
 
-Las cookies de producción llevan `Secure`: utiliza HTTPS para iniciar sesión en el contenedor. El arranque por HTTP sirve para comprobar disponibilidad, y el desarrollo local habitual continúa con `npm.cmd run dev`. El volumen anónimo declarado por la imagen persiste fuera de su capa escribible, pero para recreaciones y copias de seguridad utiliza el volumen de nombre estable del ejemplo; conserva también el volumen PostgreSQL. No elimines volúmenes si necesitas conservar datos.
+Las cookies de producción llevan `Secure`: utiliza HTTPS para iniciar sesión en el contenedor. El arranque por HTTP sirve para comprobar disponibilidad, y el desarrollo local habitual continúa con `npm.cmd run dev`. Compose conserva los archivos en `pujafacil_private` y los datos en `pujafacil_pgdata` (con el prefijo del proyecto Compose). `ENCRYPTION_KEY_HEX` y `SESSION_COOKIE_NAME` se transmiten al contenedor; las rutas TLS de la máquina anfitriona se sustituyen por las rutas montadas. Conserva también la clave de cifrado entre recreaciones.
 
 ---
 
@@ -251,12 +277,14 @@ Las cookies de producción llevan `Secure`: utiliza HTTPS para iniciar sesión e
 
 - **Modelo de Datos y Entidades:** Detalle de tablas, tipos y relaciones en [`docs/modelo-datos.md`](docs/modelo-datos.md).
 - **Esquema Prisma:** Definición completa en [`prisma/schema.prisma`](prisma/schema.prisma).
+- **Arquitectura:** [PNG](docs/arquitectura-monolito.png) · [SVG editable](docs/arquitectura-monolito.svg).
+- **Modelo entidad-relación:** [PNG](docs/modelo-datos.png) · [SVG editable](docs/modelo-datos.svg).
 
 ---
 
 ## 12. Uso de IA
 
 En cumplimiento con las directrices académicas del curso:
-- **Herramientas utilizadas:** Codex para implementar el plan J2/15-C y apoyar la revisión de código.
-- **Finalidad:** Servicios de archivos y auditoría, integración con contratos existentes, pruebas automatizadas y documentación de ejecución.
+- **Herramientas utilizadas:** Codex para implementar los planes J2/15-C y de integración del 16/11, y apoyar la revisión de código.
+- **Finalidad:** Servicios de archivos y auditoría, integración del Header y servidor, diagramas SVG/PNG generados con Sharp, configuración Docker, pruebas automatizadas y documentación de ejecución.
 - **Revisión:** Se contrasta el código con el esquema Prisma, los permisos, la documentación incluida con Next.js y las comprobaciones lint/test/build. La revisión humana y las pruebas manuales de despliegue, TLS y chat siguen siendo responsabilidad del equipo; no se atribuyen verificaciones que no se hayan ejecutado.
