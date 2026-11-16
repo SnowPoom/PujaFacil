@@ -113,9 +113,11 @@ export default function MisArticulosPage() {
         setSuccessFeedback("Artículo enviado a revisión con éxito. Un verificador evaluará la publicación.");
         setReloadTrigger((prev) => prev + 1);
       } else {
-        setErrorMessage(
-          data?.error?.message || "No se pudo enviar el artículo a verificación. Verifica que tenga fotografías adjuntas."
-        );
+        const errorMsg =
+          data?.error?.code === "MISSING_PHOTO"
+            ? "Debes subir al menos una fotografía antes de enviar el artículo a verificación. Haz clic en 'Ver / Editar' para adjuntarla."
+            : data?.error?.message || "No se pudo enviar el artículo a verificación. Verifica que tenga fotografías adjuntas.";
+        setErrorMessage(errorMsg);
       }
     } catch {
       setErrorMessage("Error de conexión al enviar el artículo a verificación.");
