@@ -49,7 +49,8 @@ export const createAuctionSchema = z
       .string()
       .trim()
       .min(1, "El identificador del artículo es obligatorio.")
-      .max(128, "Identificador de artículo inválido."),
+      .max(128, "Identificador de artículo inválido.")
+      .regex(/^[A-Za-z0-9_-]{1,128}$/, "Identificador de artículo inválido."),
     startingPrice: usdAmountSchema,
     minIncrement: usdAmountSchema,
     opensAt: isoDateTimeSchema,

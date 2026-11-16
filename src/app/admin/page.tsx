@@ -1,45 +1,81 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
-
-const ADMIN_SUMMARY_METRICS = [
-  {
-    label: "Artículos pendientes de verificación",
-    value: 4,
-    badge: "PENDIENTE_REVISION",
-    variant: "accent" as const,
-    href: "/admin/verificaciones",
-    cta: "Asignar verificadores",
-  },
-  {
-    label: "Subastas programadas",
-    value: 3,
-    badge: "PROGRAMADA",
-    variant: "neutral" as const,
-    href: "/admin/subastas",
-    cta: "Gestionar programación",
-  },
-  {
-    label: "Subastas activas en vivo",
-    value: 2,
-    badge: "ACTIVA",
-    variant: "success" as const,
-    href: "/admin/subastas",
-    cta: "Supervisar subastas",
-  },
-  {
-    label: "Ofertas válidas registradas",
-    value: 19,
-    badge: "TIEMPO REAL",
-    variant: "neutral" as const,
-    href: "/subastas",
-    cta: "Ver catálogo público",
-  },
-];
+import { requireCurrentUser } from "@/lib/auth/server";
+import { hasRole } from "@/lib/auth/guards";
+import { getAdminDashboardSummary } from "@/modules/auctions/auction-service";
 
 export default function AdminDashboardPage() {
   return (
     <main className="pf-page space-y-6">
+      <Suspense fallback={<p role="status">Cargando resumen administrativo…</p>}>
+        <AdminDashboardContent />
+      </Suspense>
+    </main>
+  );
+}
+
+async function AdminDashboardContent() {
+  const actor = await requireCurrentUser();
+
+  if (actor.status !== "ACTIVA" || !hasRole(actor, "ADMIN_SUBASTAS")) {
+    return (
+      <Card>
+        <div className="space-y-4">
+          <h1 className="text-2xl font-bold" style={{ color: "var(--pf-primary)" }}>
+            Acceso restringido
+          </h1>
+          <p role="alert" className="pf-error">
+            Solo un administrador de subastas con cuenta activa puede consultar el resumen de administración.
+          </p>
+          <Link href="/panel" className="pf-btn-secondary inline-block">
+            Volver a mi panel
+          </Link>
+        </div>
+      </Card>
+    );
+  }
+
+  const summary = await getAdminDashboardSummary();
+
+  const metrics = [
+    {
+      label: "Artículos pendientes de verificación",
+      value: summary.pendingArticlesCount,
+      badge: "PENDIENTE_REVISION",
+      variant: "accent" as const,
+      href: "/admin/verificaciones",
+      cta: "Asignar verificadores",
+    },
+    {
+      label: "Subastas programadas",
+      value: summary.scheduledAuctionsCount,
+      badge: "PROGRAMADA",
+      variant: "neutral" as const,
+      href: "/admin/subastas",
+      cta: "Gestionar programación",
+    },
+    {
+      label: "Subastas activas en vivo",
+      value: summary.activeAuctionsCount,
+      badge: "ACTIVA",
+      variant: "success" as const,
+      href: "/admin/subastas",
+      cta: "Supervisar subastas",
+    },
+    {
+      label: "Ofertas válidas registradas",
+      value: summary.validBidsCount,
+      badge: "TIEMPO REAL",
+      variant: "neutral" as const,
+      href: "/subastas",
+      cta: "Ver catálogo público",
+    },
+  ];
+
+  return (
+    <>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: "var(--pf-primary)" }}>
@@ -66,7 +102,7 @@ export default function AdminDashboardPage() {
         aria-label="Indicadores operativos"
         className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
       >
-        {ADMIN_SUMMARY_METRICS.map((metric) => (
+        {metrics.map((metric) => (
           <Card key={metric.label} className="flex flex-col justify-between gap-4">
             <div>
               <div className="flex items-center justify-between gap-2 mb-2">
@@ -99,6 +135,6 @@ export default function AdminDashboardPage() {
           </Link>
         </div>
       </Card>
-    </main>
+    </>
   );
 }

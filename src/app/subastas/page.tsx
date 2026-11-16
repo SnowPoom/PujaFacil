@@ -1,68 +1,16 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import Pagination from "@/components/ui/Pagination";
+import type {
+  PublicAuctionListItem,
+  PublicAuctionListResult,
+} from "@/modules/auctions/auction-service";
 
-type PublicAuctionStatus = "ACTIVA" | "PROGRAMADA" | "ADJUDICADA" | "CERRADA_SIN_OFERTAS";
-
-interface PublicAuctionItem {
-  id: string;
-  title: string;
-  category: string;
-  startingPrice: string;
-  minIncrement: string;
-  highestBid: string | null;
-  bidCount: number;
-  status: PublicAuctionStatus;
-  opensAt: string;
-  closesAt: string;
-  winnerAlias?: string;
-}
-
-const PUBLIC_AUCTIONS_MOCK: PublicAuctionItem[] = [
-  {
-    id: "sub-demo-002",
-    title: "Mapa Cartográfico Antiguo de Quito (1748)",
-    category: "Cartografía e Historia",
-    startingPrice: "900.00",
-    minIncrement: "25.00",
-    highestBid: "1125.00",
-    bidCount: 6,
-    status: "ACTIVA",
-    opensAt: "2026-11-14T18:00:00Z",
-    closesAt: "2026-11-17T18:00:00Z",
-  },
-  {
-    id: "sub-demo-001",
-    title: "Escultura de Bronce Fundido Siglo XIX",
-    category: "Escultura",
-    startingPrice: "1500.00",
-    minIncrement: "50.00",
-    highestBid: null,
-    bidCount: 0,
-    status: "PROGRAMADA",
-    opensAt: "2026-11-15T14:00:00Z",
-    closesAt: "2026-11-16T20:00:00Z",
-  },
-  {
-    id: "sub-demo-000",
-    title: "Juego de Té de Plata Martillada s. XX",
-    category: "Platería",
-    startingPrice: "450.00",
-    minIncrement: "20.00",
-    highestBid: "620.00",
-    bidCount: 5,
-    status: "ADJUDICADA",
-    opensAt: "2026-11-10T12:00:00Z",
-    closesAt: "2026-11-12T18:00:00Z",
-    winnerAlias: "Postor-A84F",
-  },
-];
-
-function badgeVariant(status: PublicAuctionStatus) {
+function badgeVariant(status: PublicAuctionListItem["status"]) {
   switch (status) {
     case "ACTIVA":
       return "success";
@@ -75,20 +23,72 @@ function badgeVariant(status: PublicAuctionStatus) {
 }
 
 export default function SubastasPublicasPage() {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("TODAS");
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState<number>(1);
+  const [result, setResult] = useState<PublicAuctionListResult | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const filtered = useMemo(() => {
-    return PUBLIC_AUCTIONS_MOCK.filter((item) => {
-      const matchesStatus = statusFilter === "TODAS" || item.status === statusFilter;
-      const matchesText =
-        query.trim() === "" ||
-        item.title.toLowerCase().includes(query.trim().toLowerCase()) ||
-        item.category.toLowerCase().includes(query.trim().toLowerCase());
-      return matchesStatus && matchesText;
-    });
-  }, [query, statusFilter]);
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+
+    async function fetchCatalog() {
+      try {
+        const params = new URLSearchParams();
+        if (statusFilter && statusFilter !== "TODAS") {
+          params.set("status", statusFilter);
+        }
+        if (query.trim()) {
+          params.set("q", query.trim());
+        }
+        params.set("page", String(page));
+        params.set("pageSize", "9");
+
+        const response = await fetch(`/api/auctions?${params.toString()}`, {
+          credentials: "same-origin",
+          cache: "no-store",
+          signal: controller.signal,
+        });
+
+        const payload = (await response.json()) as
+          | { ok: true; data: PublicAuctionListResult }
+          | { ok: false; error?: { message?: string } };
+
+        if (!active) return;
+
+        if (!response.ok || !payload.ok) {
+          setErrorMsg(
+            (!payload.ok && payload.error?.message) ||
+              "No se pudo cargar el catálogo público de subastas.",
+          );
+          setLoading(false);
+          return;
+        }
+
+        setResult(payload.data);
+        setErrorMsg(null);
+        setLoading(false);
+      } catch (err) {
+        if (!active || (err instanceof DOMException && err.name === "AbortError")) {
+          return;
+        }
+        setErrorMsg("Error de conexión al consultar las subastas públicas.");
+        setLoading(false);
+      }
+    }
+
+    void fetchCatalog();
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [query, statusFilter, page]);
+
+  const items = result?.items ?? [];
+  const totalPages = result?.pages ?? 1;
 
   return (
     <main className="pf-page space-y-6">
@@ -98,106 +98,171 @@ export default function SubastasPublicasPage() {
             Catálogo Público de Subastas
           </h1>
           <p className="text-sm mt-1">
-            Explora lotes verificados por nuestra casa de subastas. Ofertas en USD con identidad protegida mediante seudónimo.
+            Explora lotes verificados en subasta activa, programados o adjudicados. Consulta libre sin exponer datos personales.
           </p>
         </div>
         <Link href="/" className="pf-btn-secondary">
-          Catálogo de artículos
+          Ver catálogo de artículos
         </Link>
       </div>
 
       <Card>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="sm:col-span-2">
-            <label htmlFor="auction-search" className="pf-label">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+          <div className="pf-field md:col-span-2">
+            <label htmlFor="search-auctions" className="pf-label">
               Buscar por título o categoría
             </label>
             <input
-              id="auction-search"
+              id="search-auctions"
               type="search"
               className="pf-input"
-              placeholder="Ej. Cartografía, Escultura, Relojería…"
+              placeholder="Ej. Relojería, Escultura, Cartografía..."
               value={query}
               onChange={(e) => {
+                setLoading(true);
                 setQuery(e.target.value);
                 setPage(1);
               }}
             />
           </div>
-          <div>
-            <label htmlFor="auction-status-filter" className="pf-label">
-              Filtrar por estado
+
+          <div className="pf-field">
+            <label htmlFor="status-auctions" className="pf-label">
+              Estado de subasta
             </label>
             <select
-              id="auction-status-filter"
+              id="status-auctions"
               className="pf-input"
               value={statusFilter}
               onChange={(e) => {
+                setLoading(true);
                 setStatusFilter(e.target.value);
                 setPage(1);
               }}
             >
-              <option value="TODAS">Todas las subastas públicas</option>
-              <option value="ACTIVA">ACTIVA (en vivo)</option>
-              <option value="PROGRAMADA">PROGRAMADA (próximas)</option>
-              <option value="ADJUDICADA">ADJUDICADA (resultados)</option>
+              <option value="TODAS">Todas las públicas</option>
+              <option value="ACTIVA">En vivo (ACTIVA)</option>
+              <option value="PROGRAMADA">Próximas (PROGRAMADA)</option>
+              <option value="ADJUDICADA">Adjudicadas (ADJUDICADA)</option>
+              <option value="CERRADA_SIN_OFERTAS">Cerradas sin ofertas</option>
             </select>
           </div>
         </div>
       </Card>
 
-      {filtered.length === 0 ? (
+      {errorMsg && (
         <Card>
-          <p className="text-sm text-center py-6">
-            No se encontraron subastas que coincidan con los criterios de búsqueda.
+          <p className="pf-error" role="alert">
+            {errorMsg}
+          </p>
+        </Card>
+      )}
+
+      {loading ? (
+        <Card>
+          <p className="text-sm" role="status">
+            Consultando subastas disponibles…
+          </p>
+        </Card>
+      ) : items.length === 0 ? (
+        <Card>
+          <p className="text-sm" role="status">
+            No se encontraron subastas que coincidan con los filtros seleccionados.
           </p>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filtered.map((auction) => (
-            <Card key={auction.id} className="flex flex-col justify-between gap-4">
+        <section
+          aria-label="Listado de subastas públicas"
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5"
+        >
+          {items.map((item) => (
+            <Card key={item.id} className="flex flex-col justify-between gap-4">
               <div className="space-y-3">
+                {item.photoFileIds[0] && (
+                  <div
+                    className="w-full h-44 overflow-hidden rounded-lg border flex items-center justify-center bg-white"
+                    style={{ borderColor: "var(--pf-border)" }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`/api/files/${encodeURIComponent(item.photoFileIds[0])}`}
+                      alt={`Fotografía de ${item.title}`}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-mono opacity-75">{auction.category}</span>
-                  <Badge variant={badgeVariant(auction.status)}>{auction.status}</Badge>
+                  <Badge variant={badgeVariant(item.status)}>{item.status}</Badge>
+                  <span className="text-xs font-mono opacity-70">{item.id}</span>
                 </div>
 
-                <h2 className="text-lg font-bold leading-snug">{auction.title}</h2>
-
-                <div className="grid grid-cols-2 gap-2 pt-2 border-t text-xs" style={{ borderColor: "var(--pf-border)" }}>
-                  <div>
-                    <span className="opacity-75 block">Precio salida</span>
-                    <span className="font-mono font-semibold text-sm">${auction.startingPrice}</span>
-                  </div>
-                  <div>
-                    <span className="opacity-75 block">Oferta máxima</span>
-                    <span className="font-mono font-bold text-sm" style={{ color: "var(--pf-primary)" }}>
-                      {auction.highestBid ? `$${auction.highestBid}` : "Sin pujas"}
-                    </span>
-                  </div>
+                <div>
+                  <h2 className="text-lg font-semibold leading-snug">{item.title}</h2>
+                  <p className="text-xs opacity-75 mt-1">{item.category}</p>
                 </div>
 
-                <div className="text-xs space-y-1 opacity-80">
-                  <div>Incremento mínimo: +${auction.minIncrement} USD</div>
-                  <div>Ofertas registradas: {auction.bidCount}</div>
-                  <div>Cierre (servidor): {auction.closesAt}</div>
-                  {auction.winnerAlias && (
-                    <div className="font-semibold">
-                      Seudónimo adjudicado: <span className="font-mono">{auction.winnerAlias}</span>
+                <dl
+                  className="text-sm space-y-1 border-t pt-3"
+                  style={{ borderColor: "var(--pf-border)" }}
+                >
+                  <div className="flex justify-between">
+                    <dt className="opacity-80">Precio de salida:</dt>
+                    <dd className="font-mono font-semibold">${item.startingPrice} USD</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="opacity-80">Incremento mínimo:</dt>
+                    <dd className="font-mono">+${item.minIncrement} USD</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="opacity-80">Oferta máxima:</dt>
+                    <dd
+                      className="font-mono font-bold"
+                      style={{ color: "var(--pf-primary)" }}
+                    >
+                      {item.highestBid ? `$${item.highestBid} USD` : "Sin ofertas"}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between text-xs pt-1">
+                    <dt className="opacity-75">Ofertas registradas:</dt>
+                    <dd>{item.bidCount}</dd>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <dt className="opacity-75">Apertura (Servidor):</dt>
+                    <dd className="font-mono">{item.opensAt}</dd>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <dt className="opacity-75">Cierre (Servidor):</dt>
+                    <dd className="font-mono">{item.closesAt}</dd>
+                  </div>
+                  {item.winnerAlias && (
+                    <div
+                      className="flex justify-between text-xs pt-1 font-semibold"
+                      style={{ color: "var(--pf-success)" }}
+                    >
+                      <dt>Seudónimo ganador:</dt>
+                      <dd className="font-mono">{item.winnerAlias}</dd>
                     </div>
                   )}
-                </div>
+                </dl>
               </div>
 
-              <Link href={`/subastas/${auction.id}`} className="pf-btn text-center">
-                {auction.status === "ACTIVA" ? "Ingresar y ofertar en vivo" : "Ver ficha de subasta"}
+              <Link href={`/subastas/${item.id}`} className="pf-btn text-center">
+                Ver ficha y ofertas
               </Link>
             </Card>
           ))}
-        </div>
+        </section>
       )}
 
-      <Pagination page={page} pages={1} onPageChange={setPage} />
+      <Pagination
+        page={page}
+        pages={totalPages}
+        onPageChange={(nextPage) => {
+          setLoading(true);
+          setPage(nextPage);
+        }}
+      />
     </main>
   );
 }
