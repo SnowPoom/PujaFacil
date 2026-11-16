@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import {
   decideReviewSchema,
@@ -12,14 +13,18 @@ interface ReviewDecisionFormProps {
 }
 
 export default function ReviewDecisionForm({ reviewId }: ReviewDecisionFormProps) {
+  const router = useRouter();
   const [decision, setDecision] = useState<ReviewDecisionType>("APROBADO");
   const [comments, setComments] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [completed, setCompleted] = useState(false);
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (completed || submitting) return;
+
     setError(null);
     setSuccessMsg(null);
 
@@ -31,13 +36,43 @@ export default function ReviewDecisionForm({ reviewId }: ReviewDecisionFormProps
     }
 
     setSubmitting(true);
-    // En la jornada del domingo 15 se conectará a POST /api/verification/[id]/decision
-    setTimeout(() => {
-      setSubmitting(false);
+    try {
+      const response = await fetch(`/api/verification/${encodeURIComponent(reviewId)}/decision`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(parsed.data),
+      });
+
+      const body = (await response.json().catch(() => null)) as
+        | {
+            ok: true;
+            data: {
+              review: { id: string; status: ReviewDecisionType | null };
+              articleStatus: ReviewDecisionType;
+            };
+          }
+        | { ok: false; error?: { code?: string; message?: string } }
+        | null;
+
+      if (!response.ok || !body || !body.ok) {
+        const message =
+          (body && !body.ok && body.error?.message) ||
+          "No se pudo registrar la resolución del expediente.";
+        setError(message);
+        return;
+      }
+
+      setCompleted(true);
       setSuccessMsg(
-        `Resolución "${parsed.data.decision}" validada para el expediente ${reviewId}. Lista para persistir.`
+        `Dictamen "${body.data.articleStatus}" registrado exitosamente para el expediente ${reviewId}.`,
       );
-    }, 250);
+      router.refresh();
+    } catch {
+      setError("Error de conexión al intentar guardar el dictamen.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -52,7 +87,7 @@ export default function ReviewDecisionForm({ reviewId }: ReviewDecisionFormProps
           value={decision}
           onChange={(e) => setDecision(e.target.value as ReviewDecisionType)}
           className="pf-input"
-          disabled={submitting}
+          disabled={submitting || completed}
         >
           <option value="APROBADO">APROBADO — Habilitar para programación de subasta</option>
           <option value="REQUIERE_CORRECCIONES">
@@ -75,7 +110,7 @@ export default function ReviewDecisionForm({ reviewId }: ReviewDecisionFormProps
           onChange={(e) => setComments(e.target.value)}
           placeholder="Detalla la revisión de fotografías, procedencia declarada y certificados adjuntos..."
           className={`pf-input${error ? " pf-input--error" : ""}`}
-          disabled={submitting}
+          disabled={submitting || completed}
           required
         />
         <p className="text-xs mt-1 opacity-75">{comments.trim().length} / 1000 caracteres</p>
@@ -94,8 +129,12 @@ export default function ReviewDecisionForm({ reviewId }: ReviewDecisionFormProps
       )}
 
       <div className="flex flex-wrap gap-3 pt-2">
-        <Button type="submit" disabled={submitting}>
-          {submitting ? "Registrando dictamen…" : "Emitir resolución"}
+        <Button type="submit" disabled={submitting || completed}>
+          {submitting
+            ? "Registrando dictamen…"
+            : completed
+              ? "Dictamen registrado"
+              : "Emitir resolución"}
         </Button>
       </div>
     </form>

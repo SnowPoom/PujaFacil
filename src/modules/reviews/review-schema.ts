@@ -12,6 +12,8 @@ export const reviewDecisionEnum = z.enum(reviewDecisionValues, {
 
 export type ReviewDecisionType = z.infer<typeof reviewDecisionEnum>;
 
+const safeIdRegex = /^[A-Za-z0-9_-]{1,128}$/;
+
 /**
  * Esquema Zod para asignar un artículo pendiente a un verificador.
  * Solo un usuario con rol ADMIN_SUBASTAS puede ejecutar esta acción.
@@ -22,12 +24,14 @@ export const assignReviewSchema = z
       .string()
       .trim()
       .min(1, "El identificador del artículo es obligatorio.")
-      .max(128, "Identificador de artículo inválido."),
+      .max(128, "Identificador de artículo inválido.")
+      .regex(safeIdRegex, "Identificador de artículo inválido."),
     verifierId: z
       .string()
       .trim()
       .min(1, "El identificador del verificador es obligatorio.")
-      .max(128, "Identificador de verificador inválido."),
+      .max(128, "Identificador de verificador inválido.")
+      .regex(safeIdRegex, "Identificador de verificador inválido."),
   })
   .strict();
 
