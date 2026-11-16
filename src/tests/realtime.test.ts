@@ -5,10 +5,11 @@ const db = vi.hoisted(() => ({
   user: { findUnique: vi.fn() },
   session: { findUnique: vi.fn() },
   article: { findUnique: vi.fn() },
-  auction: { findUnique: vi.fn() },
+  auction: { findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn() },
   auctionAlias: { findUnique: vi.fn(), create: vi.fn(), findMany: vi.fn() },
   bid: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), count: vi.fn() },
   chatMessage: { create: vi.fn(), findMany: vi.fn() },
+  notification: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), count: vi.fn(), updateMany: vi.fn() },
   $queryRaw: vi.fn(),
   $transaction: vi.fn(),
 }));
@@ -26,6 +27,7 @@ import {
   validateRoomAccess,
 } from "../modules/chat/chat-service";
 import {
+  AUCTION_SCHEDULER_INTERVAL_MS,
   authenticateSocketHandshake,
   countDistinctRoomUsers,
   emitRoomPresence,
@@ -33,12 +35,23 @@ import {
   handleChatSend,
   registerSocketHandlers,
   revalidateSocketAccount,
+  runAuctionLifecycleTick,
+  startAuctionScheduler,
+  stopAuctionScheduler,
 } from "../server/socket/index";
 import { emitAuctionUpdated, emitNotificationToUser, getSocketServer, setSocketServer } from "../lib/realtime";
 import { getAuctionBids, getUserBids, placeBid } from "../modules/bids/bid-service";
 import { GET as getAuctionBidsRoute, POST as postAuctionBidRoute } from "../app/api/auctions/[id]/bids/route";
 import { GET as getMyBidsRoute } from "../app/api/me/bids/route";
 import { GET as getChatMessages } from "../app/api/chat/messages/route";
+import {
+  listNotifications,
+  markNotificationRead,
+  notifyUser,
+} from "../modules/notifications/notification-service";
+import { GET as getNotificationsRoute } from "../app/api/notifications/route";
+import { PATCH as patchNotificationReadRoute } from "../app/api/notifications/[id]/route";
+import { activateDueAuctions, closeDueAuctions } from "../modules/bids/auction-closer";
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -581,6 +594,7 @@ describe("Kevin 15/11 — Etapa 1: Puente realtime.ts (globalThis en servidor No
 
     registerSocketHandlers(fakeIo as never);
     expect(getSocketServer()).toBe(fakeIo);
+    stopAuctionScheduler();
 
     const auctionPayload = {
       auctionId: "sub-1",
@@ -1108,5 +1122,553 @@ describe("Kevin 15/11 — Etapa 4: GET /api/me/bids", () => {
       },
     });
     expect(JSON.stringify(payload)).not.toContain("bid-other");
+  });
+});
+
+describe("Kevin 16/11 — Etapa 1: servicio de notificaciones", () => {
+  const createdAt = new Date("2026-11-16T13:00:00.000Z");
+
+  it("notifyUser guarda en PostgreSQL ANTES de emitir notification:new a la sala privada user:<id> sin exponer el userId", async () => {
+    const order: string[] = [];
+    const emitFn = vi.fn().mockImplementation(() => order.push("socket:emit"));
+    const toFn = vi.fn().mockReturnValue({ emit: emitFn });
+    setSocketServer({ to: toFn } as never);
+    db.notification.create.mockImplementationOnce(async () => {
+      order.push("db:create");
+      return { id: "n1", type: "OUTBID", title: "Superada", body: "Otra oferta", url: "/subastas/sub-1", readAt: null, createdAt };
+    });
+
+    const dto = await notifyUser({ userId: "u1", type: "OUTBID", title: "Superada", body: "Otra oferta", url: "/subastas/sub-1" });
+
+    expect(order).toEqual(["db:create", "socket:emit"]);
+    expect(toFn).toHaveBeenCalledWith("user:u1");
+    const payload = emitFn.mock.calls[0][1];
+    expect(emitFn.mock.calls[0][0]).toBe("notification:new");
+    expect(payload).toEqual({ id: "n1", type: "OUTBID", title: "Superada", body: "Otra oferta", url: "/subastas/sub-1", createdAt: createdAt.toISOString() });
+    expect(JSON.stringify(payload)).not.toContain("u1");
+    expect(dto.readAt).toBeNull();
+    setSocketServer(undefined as never);
+  });
+
+  it("notifyUser reemplaza URLs externas por /notificaciones", async () => {
+    db.notification.create.mockImplementationOnce(async ({ data }: { data: { url: string } }) => ({
+      id: "n2", type: "X", title: "t", body: "b", url: data.url, readAt: null, createdAt,
+    }));
+    const dto = await notifyUser({ userId: "u1", type: "X", title: "t", body: "b", url: "https://malicioso.test" });
+    expect(dto.url).toBe("/notificaciones");
+  });
+
+  it("listNotifications filtra por titular y devuelve el contador de no leídas", async () => {
+    db.notification.findMany.mockResolvedValueOnce([
+      { id: "n1", type: "OUTBID", title: "t", body: "b", url: "/x", readAt: null, createdAt },
+    ]);
+    db.notification.count.mockResolvedValueOnce(1);
+    const res = await listNotifications("u1");
+    expect(db.notification.findMany.mock.calls[0][0].where).toEqual({ userId: "u1" });
+    expect(db.notification.count.mock.calls[0][0].where).toEqual({ userId: "u1", readAt: null });
+    expect(res).toEqual({ items: [expect.objectContaining({ id: "n1", readAt: null })], unreadCount: 1 });
+  });
+
+  it("markNotificationRead solo marca la propia: la de otro usuario responde 404 y no se actualiza", async () => {
+    db.notification.findFirst.mockResolvedValueOnce(null);
+    await expect(markNotificationRead("userA", "n-de-B")).rejects.toMatchObject({ status: 404, code: "NOTIFICACION_NO_ENCONTRADA" });
+    expect(db.notification.findFirst.mock.calls[0][0].where).toEqual({ id: "n-de-B", userId: "userA" });
+    expect(db.notification.updateMany).not.toHaveBeenCalled();
+
+    const readAt = new Date("2026-11-16T13:05:00.000Z");
+    db.notification.findFirst
+      .mockResolvedValueOnce({ id: "n1", type: "t", title: "t", body: "b", url: "/x", readAt: null, createdAt })
+      .mockResolvedValueOnce({ id: "n1", type: "t", title: "t", body: "b", url: "/x", readAt, createdAt });
+    db.notification.updateMany.mockResolvedValueOnce({ count: 1 });
+    const ok = await markNotificationRead("userA", "n1");
+    expect(db.notification.updateMany.mock.calls[0][0].where).toEqual({ id: "n1", userId: "userA", readAt: null });
+    expect(ok.readAt).toBe(readAt.toISOString());
+
+    // Idempotente: ya leída no vuelve a actualizar
+    db.notification.findFirst.mockResolvedValueOnce({ id: "n1", type: "t", title: "t", body: "b", url: "/x", readAt, createdAt });
+    await markNotificationRead("userA", "n1");
+    expect(db.notification.updateMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Kevin 16/11 — Etapa 2: Aviso al líder superado en placeBid", () => {
+  const activeBuyer = { status: "ACTIVA" as const, roles: [{ role: "COMPRADOR" as const }] };
+  const makeActiveAuctionRow = () => ({
+    id: "sub-1",
+    articleId: "art-1",
+    startingPrice: new Prisma.Decimal("150.00"),
+    minIncrement: new Prisma.Decimal("10.00"),
+    opensAt: new Date(Date.now() - 3_600_000),
+    closesAt: new Date(Date.now() + 3_600_000),
+    status: "ACTIVA" as const,
+  });
+
+  it("notifica al líder anterior (OUTBID) cuando otro comprador lo supera, sin revelar la identidad del nuevo postor", async () => {
+    const emitFn = vi.fn();
+    const toFn = vi.fn().mockReturnValue({ emit: emitFn });
+    setSocketServer({ to: toFn } as never);
+
+    db.user.findUnique.mockResolvedValueOnce(activeBuyer);
+    db.$queryRaw.mockResolvedValueOnce([makeActiveAuctionRow()]);
+    db.article.findUnique.mockResolvedValueOnce({ ownerId: "vendedor-1", title: "Reloj Antiguo Suizo (Demo)" });
+    db.bid.findUnique.mockResolvedValueOnce(null);
+    db.bid.findFirst.mockResolvedValueOnce({
+      id: "bid-leader-old",
+      amount: new Prisma.Decimal("150.00"),
+      buyerId: "buyer-anterior",
+    });
+    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Postor-nuevo9" });
+    const acceptedAt = new Date("2026-11-16T14:00:00.000Z");
+    db.bid.create.mockResolvedValueOnce({
+      id: "bid-new",
+      amount: new Prisma.Decimal("160.00"),
+      acceptedAt,
+    });
+    db.bid.count.mockResolvedValueOnce(2);
+    db.notification.create.mockResolvedValueOnce({
+      id: "notif-outbid-1",
+      type: "OUTBID",
+      title: "Tu oferta fue superada",
+      body: "Otro participante registró una oferta mayor de $160.00 USD en «Reloj Antiguo Suizo (Demo)».",
+      url: "/subastas/sub-1",
+      readAt: null,
+      createdAt: acceptedAt,
+    });
+
+    await placeBid({
+      auctionId: "sub-1",
+      buyerId: "buyer-nuevo",
+      amount: "160.00",
+      requestId: "req-outbid-1",
+    });
+
+    expect(db.notification.create).toHaveBeenCalledOnce();
+    const createdNotifArg = db.notification.create.mock.calls[0][0].data;
+    expect(createdNotifArg.userId).toBe("buyer-anterior");
+    expect(createdNotifArg.type).toBe("OUTBID");
+    expect(createdNotifArg.url).toBe("/subastas/sub-1");
+    expect(createdNotifArg.body).toContain("«Reloj Antiguo Suizo (Demo)»");
+    expect(createdNotifArg.body).not.toContain("#sub-1");
+    expect(createdNotifArg.body).not.toContain("buyer-nuevo");
+    expect(toFn).toHaveBeenCalledWith("user:buyer-anterior");
+    setSocketServer(undefined as never);
+  });
+
+  it("no notifica si el mismo líder mejora su propia oferta ni en reintento idempotente", async () => {
+    // 1. Mismo comprador supera su propia oferta
+    db.user.findUnique.mockResolvedValueOnce(activeBuyer);
+    db.$queryRaw.mockResolvedValueOnce([makeActiveAuctionRow()]);
+    db.article.findUnique.mockResolvedValueOnce({ ownerId: "vendedor-1" });
+    db.bid.findUnique.mockResolvedValueOnce(null);
+    db.bid.findFirst.mockResolvedValueOnce({
+      id: "bid-self",
+      amount: new Prisma.Decimal("150.00"),
+      buyerId: "buyer-1",
+    });
+    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Postor-self01" });
+    db.bid.create.mockResolvedValueOnce({
+      id: "bid-self-2",
+      amount: new Prisma.Decimal("160.00"),
+      acceptedAt: new Date(),
+    });
+    db.bid.count.mockResolvedValueOnce(2);
+
+    await placeBid({
+      auctionId: "sub-1",
+      buyerId: "buyer-1",
+      amount: "160.00",
+      requestId: "req-self",
+    });
+    expect(db.notification.create).not.toHaveBeenCalled();
+
+    // 2. Reintento idempotente
+    db.user.findUnique.mockResolvedValueOnce(activeBuyer);
+    db.$queryRaw.mockResolvedValueOnce([makeActiveAuctionRow()]);
+    db.article.findUnique.mockResolvedValueOnce({ ownerId: "vendedor-1" });
+    db.bid.findUnique.mockResolvedValueOnce({
+      id: "bid-self-2",
+      amount: new Prisma.Decimal("160.00"),
+      acceptedAt: new Date(),
+    });
+    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Postor-self01" });
+    db.bid.findFirst.mockResolvedValueOnce({ amount: new Prisma.Decimal("160.00") });
+    db.bid.count.mockResolvedValueOnce(2);
+
+    await placeBid({
+      auctionId: "sub-1",
+      buyerId: "buyer-1",
+      amount: "160.00",
+      requestId: "req-self",
+    });
+    expect(db.notification.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("Kevin 16/11 — Etapa 3: Rutas HTTP GET /api/notifications y PATCH /api/notifications/[id]", () => {
+  const validToken = "a".repeat(64);
+  const userASession = {
+    expiresAt: new Date(Date.now() + 60_000),
+    user: {
+      id: "user-A",
+      nombreCompleto: "Usuario A",
+      email: "usera@pujafacil.test",
+      status: "ACTIVA" as const,
+      roles: [{ role: "COMPRADOR" as const }],
+    },
+  };
+
+  it("GET /api/notifications exige sesión activa (401/403) y devuelve solo notificaciones propias de user-A", async () => {
+    expect((await getNotificationsRoute(new Request("http://localhost:3000/api/notifications"))).status).toBe(401);
+
+    db.session.findUnique.mockResolvedValueOnce({
+      ...userASession,
+      user: { ...userASession.user, status: "PENDIENTE" },
+    });
+    const pendRes = await getNotificationsRoute(
+      new Request("http://localhost:3000/api/notifications", {
+        headers: { cookie: `pf_session=${validToken}` },
+      }),
+    );
+    expect(pendRes.status).toBe(403);
+
+    const createdAt = new Date("2026-11-16T15:00:00.000Z");
+    db.session.findUnique.mockResolvedValueOnce(userASession);
+    db.notification.findMany.mockResolvedValueOnce([
+      {
+        id: "notif-A1",
+        type: "OUTBID",
+        title: "Tu oferta fue superada",
+        body: "Nuevo monto $170.00",
+        url: "/subastas/sub-1",
+        readAt: null,
+        createdAt,
+      },
+    ]);
+    db.notification.count.mockResolvedValueOnce(1);
+
+    const okRes = await getNotificationsRoute(
+      new Request("http://localhost:3000/api/notifications", {
+        headers: { cookie: `pf_session=${validToken}` },
+      }),
+    );
+    expect(okRes.status).toBe(200);
+    expect(db.notification.findMany.mock.calls[0][0].where).toEqual({ userId: "user-A" });
+    expect(await okRes.json()).toEqual({
+      ok: true,
+      data: {
+        items: [
+          {
+            id: "notif-A1",
+            type: "OUTBID",
+            title: "Tu oferta fue superada",
+            body: "Nuevo monto $170.00",
+            url: "/subastas/sub-1",
+            readAt: null,
+            createdAt: createdAt.toISOString(),
+          },
+        ],
+        unreadCount: 1,
+      },
+    });
+  });
+
+  it("PATCH /api/notifications/[id] impide que user-A marque notificación de user-B (404) y marca correctamente la propia", async () => {
+    // 1. Origen cruzado rechazado con 403
+    const crossOriginReq = new Request("http://localhost:3000/api/notifications/notif-B1", {
+      method: "PATCH",
+      headers: { origin: "https://attacker.test", cookie: `pf_session=${validToken}` },
+    });
+    expect(
+      (await patchNotificationReadRoute(crossOriginReq, { params: Promise.resolve({ id: "notif-B1" }) })).status,
+    ).toBe(403);
+
+    // 2. user-A intenta marcar notificación de user-B -> 404 NOTIFICACION_NO_ENCONTRADA
+    db.session.findUnique.mockResolvedValueOnce(userASession);
+    db.notification.findFirst.mockResolvedValueOnce(null);
+    const patchOtherRes = await patchNotificationReadRoute(
+      new Request("http://localhost:3000/api/notifications/notif-B1", {
+        method: "PATCH",
+        headers: { origin: "http://localhost:3000", cookie: `pf_session=${validToken}` },
+      }),
+      { params: Promise.resolve({ id: "notif-B1" }) },
+    );
+    expect(patchOtherRes.status).toBe(404);
+    expect(db.notification.findFirst.mock.calls[0][0].where).toEqual({ id: "notif-B1", userId: "user-A" });
+    expect(db.notification.updateMany).not.toHaveBeenCalled();
+
+    // 3. user-A marca su propia notificación notif-A1 -> 200 con readAt poblado
+    const createdAt = new Date("2026-11-16T15:00:00.000Z");
+    const readAt = new Date("2026-11-16T15:02:00.000Z");
+    db.session.findUnique.mockResolvedValueOnce(userASession);
+    db.notification.findFirst
+      .mockResolvedValueOnce({
+        id: "notif-A1",
+        type: "OUTBID",
+        title: "Tu oferta fue superada",
+        body: "Nuevo monto $170.00",
+        url: "/subastas/sub-1",
+        readAt: null,
+        createdAt,
+      })
+      .mockResolvedValueOnce({
+        id: "notif-A1",
+        type: "OUTBID",
+        title: "Tu oferta fue superada",
+        body: "Nuevo monto $170.00",
+        url: "/subastas/sub-1",
+        readAt,
+        createdAt,
+      });
+    db.notification.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    const patchOwnRes = await patchNotificationReadRoute(
+      new Request("http://localhost:3000/api/notifications/notif-A1", {
+        method: "PATCH",
+        headers: { origin: "http://localhost:3000", cookie: `pf_session=${validToken}` },
+      }),
+      { params: Promise.resolve({ id: "notif-A1" }) },
+    );
+    expect(patchOwnRes.status).toBe(200);
+    const body = await patchOwnRes.json();
+    expect(body.ok).toBe(true);
+    expect(body.data.notification.readAt).toBe(readAt.toISOString());
+  });
+});
+
+describe("Kevin 16/11 — Etapa 5: Cierre y adjudicación de subastas (auction-closer.ts)", () => {
+  const serverNow = new Date("2026-11-16T18:00:00.000Z");
+  const pastOpen = new Date("2026-11-15T18:00:00.000Z");
+  const pastClose = new Date("2026-11-16T17:59:00.000Z");
+
+  it("closeDueAuctions cierra subasta vencida sin ofertas como CERRADA_SIN_OFERTAS y emite auction:updated", async () => {
+    const emitFn = vi.fn();
+    const toFn = vi.fn().mockReturnValue({ emit: emitFn });
+    setSocketServer({ to: toFn } as never);
+
+    db.auction.findMany.mockResolvedValueOnce([{ id: "sub-empty" }]);
+    db.$queryRaw.mockResolvedValueOnce([
+      {
+        id: "sub-empty",
+        articleId: "art-1",
+        opensAt: pastOpen,
+        closesAt: pastClose,
+        status: "ACTIVA",
+        winnerBidId: null,
+        closedAt: null,
+      },
+    ]);
+    db.bid.findFirst.mockResolvedValueOnce(null);
+    db.bid.count.mockResolvedValueOnce(0);
+    db.article.findUnique.mockResolvedValueOnce({ ownerId: "vendedor-1", title: "Lámpara Art Déco" });
+    db.auction.update.mockResolvedValueOnce({});
+    db.notification.create.mockResolvedValueOnce({
+      id: "notif-seller",
+      type: "AUCTION_CLOSED",
+      title: "Subasta finalizada",
+      body: "La subasta finalizó sin ofertas",
+      url: "/subastas/sub-empty",
+      readAt: null,
+      createdAt: serverNow,
+    });
+
+    const results = await closeDueAuctions(serverNow);
+    expect(results).toEqual([
+      {
+        auctionId: "sub-empty",
+        status: "CERRADA_SIN_OFERTAS",
+        winnerBidId: null,
+        winnerBuyerId: null,
+        highestBid: null,
+        bidCount: 0,
+        closedAt: serverNow.toISOString(),
+      },
+    ]);
+    expect(db.auction.update).toHaveBeenCalledWith({
+      where: { id: "sub-empty" },
+      data: {
+        status: "CERRADA_SIN_OFERTAS",
+        winnerBidId: null,
+        closedAt: serverNow,
+      },
+    });
+    expect(toFn).toHaveBeenCalledWith("auction:sub-empty");
+    expect(emitFn).toHaveBeenCalledWith("auction:updated", {
+      auctionId: "sub-empty",
+      highestBid: null,
+      bidCount: 0,
+      status: "CERRADA_SIN_OFERTAS",
+      closesAt: pastClose.toISOString(),
+    });
+    setSocketServer(undefined as never);
+  });
+
+  it("closeDueAuctions adjudica con oferta ganadora (monto desc, acceptedAt asc, id asc), guarda winnerBidId y notifica ganador", async () => {
+    const emitFn = vi.fn();
+    const toFn = vi.fn().mockReturnValue({ emit: emitFn });
+    setSocketServer({ to: toFn } as never);
+
+    db.auction.findMany.mockResolvedValueOnce([{ id: "sub-win" }]);
+    db.$queryRaw.mockResolvedValueOnce([
+      {
+        id: "sub-win",
+        articleId: "art-1",
+        opensAt: pastOpen,
+        closesAt: pastClose,
+        status: "ACTIVA",
+        winnerBidId: null,
+        closedAt: null,
+      },
+    ]);
+    db.bid.findFirst.mockResolvedValueOnce({
+      id: "bid-winner-99",
+      buyerId: "buyer-ganador",
+      amount: new Prisma.Decimal("250.00"),
+    });
+    db.bid.count.mockResolvedValueOnce(4);
+    db.article.findUnique.mockResolvedValueOnce({ ownerId: "vendedor-1", title: "Reloj Suizo" });
+    db.auction.update.mockResolvedValueOnce({});
+    db.notification.create
+      .mockResolvedValueOnce({
+        id: "notif-win",
+        type: "AUCTION_WON",
+        title: "¡Ganaste la subasta!",
+        body: "Tu oferta de $250.00 USD resultó adjudicada en «Reloj Suizo».",
+        url: "/subastas/sub-win",
+        readAt: null,
+        createdAt: serverNow,
+      })
+      .mockResolvedValueOnce({
+        id: "notif-seller-win",
+        type: "AUCTION_CLOSED",
+        title: "Subasta finalizada",
+        body: "La subasta finalizó como ADJUDICADA",
+        url: "/subastas/sub-win",
+        readAt: null,
+        createdAt: serverNow,
+      });
+
+    const results = await closeDueAuctions(serverNow);
+
+    // Verifica el criterio de desempate en la consulta a Bid
+    expect(db.bid.findFirst.mock.calls[0][0].orderBy).toEqual([
+      { amount: "desc" },
+      { acceptedAt: "asc" },
+      { id: "asc" },
+    ]);
+    expect(db.auction.update).toHaveBeenCalledWith({
+      where: { id: "sub-win" },
+      data: {
+        status: "ADJUDICADA",
+        winnerBidId: "bid-winner-99",
+        closedAt: serverNow,
+      },
+    });
+    expect(results).toEqual([
+      {
+        auctionId: "sub-win",
+        status: "ADJUDICADA",
+        winnerBidId: "bid-winner-99",
+        winnerBuyerId: "buyer-ganador",
+        highestBid: "250.00",
+        bidCount: 4,
+        closedAt: serverNow.toISOString(),
+      },
+    ]);
+    expect(toFn).toHaveBeenCalledWith("user:buyer-ganador");
+    setSocketServer(undefined as never);
+  });
+
+  it("closeDueAuctions es idempotente: si la subasta ya fue cerrada por otra ejecución, no vuelve a adjudicar ni a notificar", async () => {
+    db.auction.findMany.mockResolvedValueOnce([{ id: "sub-already" }]);
+    // Al adquirir el bloqueo SELECT FOR UPDATE, el status ya cambió a ADJUDICADA
+    db.$queryRaw.mockResolvedValueOnce([
+      {
+        id: "sub-already",
+        articleId: "art-1",
+        opensAt: pastOpen,
+        closesAt: pastClose,
+        status: "ADJUDICADA",
+        winnerBidId: "bid-1",
+        closedAt: pastClose,
+      },
+    ]);
+
+    const results = await closeDueAuctions(serverNow);
+    expect(results).toEqual([]);
+    expect(db.auction.update).not.toHaveBeenCalled();
+    expect(db.notification.create).not.toHaveBeenCalled();
+  });
+
+  it("activateDueAuctions actualiza PROGRAMADA -> ACTIVA transaccionalmente cuando llegó la hora de apertura", async () => {
+    const futureClose = new Date("2026-11-17T18:00:00.000Z");
+    db.auction.findMany.mockResolvedValueOnce([{ id: "sub-prog" }]);
+    db.$queryRaw.mockResolvedValueOnce([
+      {
+        id: "sub-prog",
+        articleId: "art-1",
+        opensAt: pastOpen,
+        closesAt: futureClose,
+        status: "PROGRAMADA",
+        winnerBidId: null,
+        closedAt: null,
+      },
+    ]);
+    db.auction.update.mockResolvedValueOnce({});
+    db.bid.findFirst.mockResolvedValueOnce(null);
+    db.bid.count.mockResolvedValueOnce(0);
+
+    const activated = await activateDueAuctions(serverNow);
+    expect(activated).toEqual([
+      {
+        auctionId: "sub-prog",
+        status: "ACTIVA",
+        opensAt: pastOpen.toISOString(),
+        closesAt: futureClose.toISOString(),
+      },
+    ]);
+    expect(db.auction.update).toHaveBeenCalledWith({
+      where: { id: "sub-prog" },
+      data: { status: "ACTIVA" },
+    });
+  });
+});
+
+describe("Kevin 16/11 — Etapa 6: Planificador único cada 10 s en el servidor Socket.IO", () => {
+  it("startAuctionScheduler registra un único intervalo de 10 s, ejecuta activateDueAuctions/closeDueAuctions y se limpia al cerrar el servidor", async () => {
+    vi.useFakeTimers();
+    try {
+      let closeListener: (() => void) | undefined;
+      const fakeIo = {
+        httpServer: {
+          once: vi.fn((event: string, cb: () => void) => {
+            if (event === "close") closeListener = cb;
+          }),
+        },
+      };
+
+      db.auction.findMany.mockResolvedValue([]);
+      expect(AUCTION_SCHEDULER_INTERVAL_MS).toBe(10_000);
+
+      startAuctionScheduler(fakeIo as never);
+      expect(fakeIo.httpServer.once).toHaveBeenCalledWith("close", expect.any(Function));
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      // En un tick se consultan programadas y activas vencidas
+      expect(db.auction.findMany).toHaveBeenCalledTimes(2);
+
+      // Al dispararse el evento close del httpServer se detiene el intervalo
+      closeListener?.();
+      db.auction.findMany.mockClear();
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(db.auction.findMany).not.toHaveBeenCalled();
+
+      // runAuctionLifecycleTick evita solapamiento si ya está en curso
+      db.auction.findMany.mockResolvedValue([]);
+      await runAuctionLifecycleTick();
+      expect(db.auction.findMany).toHaveBeenCalledTimes(2);
+    } finally {
+      stopAuctionScheduler();
+      vi.useRealTimers();
+    }
   });
 });
