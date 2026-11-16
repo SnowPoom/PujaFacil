@@ -1,19 +1,32 @@
 "use client";
 
-import React, { useState, useEffect, Suspense } from "react";
+import React, { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import TextField from "@/components/ui/TextField";
+import Badge from "@/components/ui/Badge";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { articleInputSchema } from "@/modules/articles/article-schema";
-import ArticleStatusBadge, {
+import {
   ArticleItem,
-  ARTICLE_STATUS_CONFIG,
   CATEGORY_OPTIONS,
   CONDITION_OPTIONS,
 } from "../../_components/ArticleStatusBadge";
+
+const STATUS_CONFIG: Record<
+  string,
+  { label: string; variant: "neutral" | "success" | "error" | "accent" }
+> = {
+  BORRADOR: { label: "Borrador", variant: "neutral" },
+  PENDIENTE_REVISION: { label: "Pendiente de revisión", variant: "accent" },
+  REQUIERE_CORRECCIONES: { label: "Requiere correcciones", variant: "error" },
+  APROBADO: { label: "Aprobado", variant: "success" },
+  RECHAZADO: { label: "Rechazado", variant: "error" },
+  ASOCIADO_SUBASTA: { label: "Asociado a subasta", variant: "accent" },
+  ARCHIVADO: { label: "Archivado", variant: "neutral" },
+};
 
 function EditarArticuloContent() {
   const params = useParams();
@@ -43,64 +56,71 @@ function EditarArticuloContent() {
   const [deleting, setDeleting] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
+  // Estados para subida de archivos
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [uploadingCert, setUploadingCert] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [fileSuccess, setFileSuccess] = useState<string | null>(null);
+
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const certInputRef = useRef<HTMLInputElement>(null);
+
   const [httpStatus, setHttpStatus] = useState<number | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  useEffect(() => {
+  const loadArticle = useCallback(async () => {
     if (!id) return;
 
+    try {
+      const res = await fetch(`/api/articles/${id}`, {
+        credentials: "same-origin",
+      });
+
+      if (!res.ok) {
+        setHttpStatus(res.status);
+        const data = await res.json().catch(() => null);
+        setApiError(data?.error?.message || "No se pudo cargar el artículo.");
+        return;
+      }
+
+      const data = await res.json();
+      if (data?.ok && data?.data?.article) {
+        const item: ArticleItem = data.data.article;
+        setArticle(item);
+        setFormData({
+          title: item.title,
+          description: item.description,
+          category: item.category,
+          condition: item.condition,
+          provenance: item.provenance,
+          initialPrice: item.initialPrice,
+        });
+        setHttpStatus(null);
+      } else {
+        setApiError(data?.error?.message || "Error al consultar los datos del artículo.");
+      }
+    } catch {
+      setApiError("Error de red al consultar el artículo.");
+    }
+  }, [id]);
+
+  useEffect(() => {
     let isMounted = true;
 
-    async function fetchArticle() {
-      try {
-        const res = await fetch(`/api/articles/${id}`, {
-          credentials: "same-origin",
-        });
-
-        if (!isMounted) return;
-
-        if (!res.ok) {
-          setHttpStatus(res.status);
-          const data = await res.json().catch(() => null);
-          setApiError(data?.error?.message || "No se pudo cargar el artículo.");
-          setLoading(false);
-          return;
-        }
-
-        const data = await res.json();
-        if (data?.ok && data?.data?.article) {
-          const item: ArticleItem = data.data.article;
-          setArticle(item);
-          setFormData({
-            title: item.title,
-            description: item.description,
-            category: item.category,
-            condition: item.condition,
-            provenance: item.provenance,
-            initialPrice: item.initialPrice,
-          });
-          setHttpStatus(null);
-        } else {
-          setApiError(data?.error?.message || "Error al consultar los datos del artículo.");
-        }
-      } catch {
-        if (isMounted) {
-          setApiError("Error de red al consultar el artículo.");
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
+    async function initialLoad() {
+      await loadArticle();
+      if (isMounted) {
+        setLoading(false);
       }
     }
 
-    fetchArticle();
+    initialLoad();
 
     return () => {
       isMounted = false;
     };
-  }, [id]);
+  }, [loadArticle]);
 
   function handleChange(
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -114,6 +134,119 @@ function EditarArticuloContent() {
         delete next[name];
         return next;
       });
+    }
+  }
+
+  // Subir fotografía: valida en cliente JPG, PNG, WebP y <= 10 MB
+  async function handlePhotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setFileError(null);
+    setFileSuccess(null);
+
+    const allowedMimeTypes = ["image/jpeg", "image/png", "image/webp"];
+    const extMatch = /\.([a-z0-9]+)$/i.exec(file.name);
+    const ext = extMatch ? extMatch[1].toLowerCase() : "";
+    const allowedExtensions = ["jpg", "jpeg", "png", "webp"];
+
+    if (!allowedMimeTypes.includes(file.type) || !allowedExtensions.includes(ext)) {
+      setFileError("La fotografía debe ser un archivo de imagen en formato JPG, PNG o WebP.");
+      if (photoInputRef.current) photoInputRef.current.value = "";
+      return;
+    }
+
+    const maxPhotoSize = 10 * 1024 * 1024; // 10 MB
+    if (file.size > maxPhotoSize) {
+      setFileError("La fotografía no debe superar el límite de 10 MB.");
+      if (photoInputRef.current) photoInputRef.current.value = "";
+      return;
+    }
+
+    setUploadingPhoto(true);
+
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      body.append("kind", "FOTO");
+      body.append("articleId", id);
+
+      const res = await fetch("/api/files", {
+        method: "POST",
+        credentials: "same-origin",
+        body,
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (res.ok && data?.ok) {
+        setFileSuccess("Fotografía subida exitosamente.");
+        if (photoInputRef.current) photoInputRef.current.value = "";
+        await loadArticle();
+      } else {
+        const msg = data?.error?.message || "No se pudo subir la fotografía.";
+        setFileError(msg);
+      }
+    } catch {
+      setFileError("Error de conexión al subir la fotografía.");
+    } finally {
+      setUploadingPhoto(false);
+    }
+  }
+
+  // Subir certificado: valida en cliente PDF y <= 20 MB
+  async function handleCertUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setFileError(null);
+    setFileSuccess(null);
+
+    const isPdfMime = file.type === "application/pdf";
+    const extMatch = /\.([a-z0-9]+)$/i.exec(file.name);
+    const ext = extMatch ? extMatch[1].toLowerCase() : "";
+
+    if (!isPdfMime || ext !== "pdf") {
+      setFileError("El certificado debe ser un documento en formato PDF.");
+      if (certInputRef.current) certInputRef.current.value = "";
+      return;
+    }
+
+    const maxCertSize = 20 * 1024 * 1024; // 20 MB
+    if (file.size > maxCertSize) {
+      setFileError("El certificado PDF no debe superar el límite de 20 MB.");
+      if (certInputRef.current) certInputRef.current.value = "";
+      return;
+    }
+
+    setUploadingCert(true);
+
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      body.append("kind", "CERTIFICADO");
+      body.append("articleId", id);
+
+      const res = await fetch("/api/files", {
+        method: "POST",
+        credentials: "same-origin",
+        body,
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (res.ok && data?.ok) {
+        setFileSuccess("Certificado de autenticidad subido exitosamente.");
+        if (certInputRef.current) certInputRef.current.value = "";
+        await loadArticle();
+      } else {
+        const msg = data?.error?.message || "No se pudo subir el certificado.";
+        setFileError(msg);
+      }
+    } catch {
+      setFileError("Error de conexión al subir el certificado.");
+    } finally {
+      setUploadingCert(false);
     }
   }
 
@@ -259,6 +392,16 @@ function EditarArticuloContent() {
   const isEditable =
     article.status === "BORRADOR" || article.status === "REQUIERE_CORRECCIONES";
 
+  const allFiles = article.files || [];
+  const photos = allFiles.filter((f) => f.kind === "FOTO");
+  const certificates = allFiles.filter((f) => f.kind === "CERTIFICADO");
+  const photosCount = photos.length;
+
+  const currentStatusMeta = STATUS_CONFIG[article.status] || {
+    label: article.status,
+    variant: "neutral" as const,
+  };
+
   return (
     <main className="pf-page">
       {/* Navegación y encabezado */}
@@ -279,12 +422,12 @@ function EditarArticuloContent() {
             </p>
           </div>
           <div>
-            <ArticleStatusBadge status={article.status} />
+            <Badge variant={currentStatusMeta.variant}>{currentStatusMeta.label}</Badge>
           </div>
         </div>
       </div>
 
-      {/* Alertas de feedback */}
+      {/* Alertas de feedback general */}
       {successMsg && (
         <div className="pf-card border-green-200 bg-green-50 mb-6 flex justify-between items-center py-3">
           <p className="pf-success font-medium my-0">{successMsg}</p>
@@ -313,21 +456,47 @@ function EditarArticuloContent() {
         </div>
       )}
 
+      {/* Alertas de subida de archivos */}
+      {fileSuccess && (
+        <div className="pf-card border-green-200 bg-green-50 mb-6 flex justify-between items-center py-3">
+          <p className="pf-success font-medium my-0">{fileSuccess}</p>
+          <button
+            type="button"
+            className="text-xs text-slate-500 hover:text-slate-800 px-2"
+            onClick={() => setFileSuccess(null)}
+            aria-label="Cerrar mensaje"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {fileError && (
+        <div className="pf-card border-red-200 bg-red-50 mb-6 flex justify-between items-center py-3">
+          <p className="pf-error font-medium my-0">{fileError}</p>
+          <button
+            type="button"
+            className="text-xs text-slate-500 hover:text-slate-800 px-2"
+            onClick={() => setFileError(null)}
+            aria-label="Cerrar mensaje de error"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* MODO LECTURA: cuando no es editable */}
       {!isEditable ? (
         <Card className="max-w-3xl">
           {/* Banner de estado no editable */}
           <div className="pf-card bg-amber-50 border-amber-200 mb-6 py-3">
             <p className="text-sm text-amber-900 my-0 font-medium">
-              ℹ️ Este artículo se encuentra en estado{" "}
-              <strong>
-                {ARTICLE_STATUS_CONFIG[article.status]?.label || article.status}
-              </strong>{" "}
+              ℹ️ Este artículo se encuentra en estado <strong>{currentStatusMeta.label}</strong>{" "}
               y no admite modificaciones en este momento.
             </p>
           </div>
 
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div>
               <h2 className="pf-label text-slate-500 mb-1">Título del artículo</h2>
               <p className="text-lg font-semibold text-slate-900">{article.title}</p>
@@ -363,14 +532,77 @@ function EditarArticuloContent() {
               </p>
             </div>
 
-            {article.files && article.files.length > 0 && (
-              <div>
-                <h2 className="pf-label text-slate-500 mb-1">Fotografías y Archivos</h2>
-                <p className="text-sm text-slate-700">
-                  {article.files.length} archivo(s) asociado(s).
-                </p>
-              </div>
-            )}
+            {/* Galería de Fotografías en Modo Lectura */}
+            <div>
+              <h2 className="pf-label text-slate-700 mb-2">Fotografías del expediente</h2>
+              {photos.length > 0 ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                  {photos.map((photo) => (
+                    <div
+                      key={photo.id}
+                      className="border border-slate-200 rounded-lg overflow-hidden bg-slate-50"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={`/api/files/${photo.id}`}
+                        alt={photo.originalName || "Fotografía del artículo"}
+                        className="w-full h-32 object-cover"
+                        loading="lazy"
+                      />
+                      <div className="p-2 text-xs text-slate-600 truncate border-t border-slate-100 bg-white">
+                        <span className="truncate block" title={photo.originalName}>
+                          {photo.originalName}
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {(photo.size / (1024 * 1024)).toFixed(2)} MB
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 italic">No hay fotografías asociadas.</p>
+              )}
+            </div>
+
+            {/* Certificado PDF en Modo Lectura */}
+            <div>
+              <h2 className="pf-label text-slate-700 mb-2">Certificado de autenticidad</h2>
+              {certificates.length > 0 ? (
+                <div className="space-y-2">
+                  {certificates.map((cert) => (
+                    <div
+                      key={cert.id}
+                      className="flex items-center justify-between p-3 border border-slate-200 rounded-lg bg-slate-50"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="text-lg" aria-hidden="true">
+                          📄
+                        </span>
+                        <div className="truncate">
+                          <p className="text-sm font-semibold text-slate-800 truncate">
+                            {cert.originalName}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {(cert.size / (1024 * 1024)).toFixed(2)} MB
+                          </p>
+                        </div>
+                      </div>
+                      <a
+                        href={`/api/files/${cert.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="pf-btn-secondary text-xs py-1 px-3 whitespace-nowrap"
+                      >
+                        Ver PDF ↗
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 italic">No se adjuntó certificado de autenticidad.</p>
+              )}
+            </div>
           </div>
 
           <div className="pt-6 border-t border-slate-200 mt-6 flex justify-end">
@@ -381,154 +613,325 @@ function EditarArticuloContent() {
         </Card>
       ) : (
         /* MODO EDICIÓN: BORRADOR o REQUIERE_CORRECCIONES */
-        <Card className="max-w-3xl">
+        <div className="space-y-6 max-w-3xl">
           {article.status === "REQUIERE_CORRECCIONES" && (
-            <div className="pf-card bg-amber-50 border-amber-200 mb-6 py-3">
+            <div className="pf-card bg-amber-50 border-amber-200 py-3">
               <p className="text-sm text-amber-900 my-0 font-medium">
-                ⚠️ Este artículo requiere correcciones antes de ser aprobado. Revisa los datos y vuelve a enviarlo a revisión.
+                ⚠️ Este artículo requiere correcciones antes de ser aprobado. Revisa los datos,
+                actualiza la información o fotografías necesarias y vuelve a enviarlo a revisión.
               </p>
             </div>
           )}
 
-          <form onSubmit={handleSaveChanges} noValidate>
-            {/* Título */}
-            <TextField
-              label="Título del artículo"
-              name="title"
-              value={formData.title}
-              onChange={handleChange}
-              placeholder="Ej. Reloj de bolsillo suizo de plata siglo XIX"
-              error={fieldErrors.title}
-              required
-              disabled={saving || submittingReview}
-            />
+          {/* Formulario de Datos del Artículo */}
+          <Card>
+            <form onSubmit={handleSaveChanges} noValidate>
+              <h2 className="text-lg font-bold text-slate-900 mb-4 pb-2 border-b border-slate-200">
+                Información del artículo
+              </h2>
 
-            {/* Categoría y Condición */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Título */}
+              <TextField
+                label="Título del artículo"
+                name="title"
+                value={formData.title}
+                onChange={handleChange}
+                placeholder="Ej. Reloj de bolsillo suizo de plata siglo XIX"
+                error={fieldErrors.title}
+                required
+                disabled={saving || submittingReview}
+              />
+
+              {/* Categoría y Condición */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="pf-field">
+                  <label htmlFor="category" className="pf-label">
+                    Categoría <span aria-hidden="true">*</span>
+                  </label>
+                  <select
+                    id="category"
+                    name="category"
+                    value={formData.category}
+                    onChange={handleChange}
+                    disabled={saving || submittingReview}
+                    className={`pf-input ${fieldErrors.category ? "pf-input--error" : ""}`}
+                    aria-invalid={fieldErrors.category ? true : undefined}
+                    aria-describedby={fieldErrors.category ? "category-error" : undefined}
+                  >
+                    <option value="">Selecciona una categoría...</option>
+                    {CATEGORY_OPTIONS.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                  {fieldErrors.category && (
+                    <p id="category-error" className="pf-error" role="alert">
+                      {fieldErrors.category}
+                    </p>
+                  )}
+                </div>
+
+                <div className="pf-field">
+                  <label htmlFor="condition" className="pf-label">
+                    Condición / Estado <span aria-hidden="true">*</span>
+                  </label>
+                  <select
+                    id="condition"
+                    name="condition"
+                    value={formData.condition}
+                    onChange={handleChange}
+                    disabled={saving || submittingReview}
+                    className={`pf-input ${fieldErrors.condition ? "pf-input--error" : ""}`}
+                    aria-invalid={fieldErrors.condition ? true : undefined}
+                    aria-describedby={fieldErrors.condition ? "condition-error" : undefined}
+                  >
+                    <option value="">Selecciona una condición...</option>
+                    {CONDITION_OPTIONS.map((cond) => (
+                      <option key={cond} value={cond}>
+                        {cond}
+                      </option>
+                    ))}
+                  </select>
+                  {fieldErrors.condition && (
+                    <p id="condition-error" className="pf-error" role="alert">
+                      {fieldErrors.condition}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Precio inicial */}
+              <TextField
+                label="Precio inicial (USD)"
+                name="initialPrice"
+                type="text"
+                value={formData.initialPrice}
+                onChange={handleChange}
+                placeholder="150.00"
+                error={fieldErrors.initialPrice}
+                required
+                disabled={saving || submittingReview}
+              />
+
+              {/* Descripción */}
               <div className="pf-field">
-                <label htmlFor="category" className="pf-label">
-                  Categoría <span aria-hidden="true">*</span>
+                <label htmlFor="description" className="pf-label">
+                  Descripción detallada <span aria-hidden="true">*</span>
                 </label>
-                <select
-                  id="category"
-                  name="category"
-                  value={formData.category}
+                <textarea
+                  id="description"
+                  name="description"
+                  rows={5}
+                  value={formData.description}
                   onChange={handleChange}
+                  placeholder="Detalla materiales, dimensiones, fabricante, época..."
                   disabled={saving || submittingReview}
-                  className={`pf-input ${fieldErrors.category ? "pf-input--error" : ""}`}
-                  aria-invalid={fieldErrors.category ? true : undefined}
-                  aria-describedby={fieldErrors.category ? "category-error" : undefined}
-                >
-                  <option value="">Selecciona una categoría...</option>
-                  {CATEGORY_OPTIONS.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
-                    </option>
-                  ))}
-                </select>
-                {fieldErrors.category && (
-                  <p id="category-error" className="pf-error" role="alert">
-                    {fieldErrors.category}
+                  className={`pf-input ${fieldErrors.description ? "pf-input--error" : ""}`}
+                  aria-invalid={fieldErrors.description ? true : undefined}
+                  aria-describedby={fieldErrors.description ? "description-error" : undefined}
+                />
+                {fieldErrors.description ? (
+                  <p id="description-error" className="pf-error" role="alert">
+                    {fieldErrors.description}
                   </p>
+                ) : (
+                  <p className="text-xs text-slate-500 mt-1">Mínimo 20 caracteres.</p>
                 )}
               </div>
 
+              {/* Procedencia */}
               <div className="pf-field">
-                <label htmlFor="condition" className="pf-label">
-                  Condición / Estado <span aria-hidden="true">*</span>
+                <label htmlFor="provenance" className="pf-label">
+                  Procedencia e Historia <span aria-hidden="true">*</span>
                 </label>
-                <select
-                  id="condition"
-                  name="condition"
-                  value={formData.condition}
+                <textarea
+                  id="provenance"
+                  name="provenance"
+                  rows={4}
+                  value={formData.provenance}
                   onChange={handleChange}
+                  placeholder="Historial de adquisición, herencia, certificados de autenticidad..."
                   disabled={saving || submittingReview}
-                  className={`pf-input ${fieldErrors.condition ? "pf-input--error" : ""}`}
-                  aria-invalid={fieldErrors.condition ? true : undefined}
-                  aria-describedby={fieldErrors.condition ? "condition-error" : undefined}
-                >
-                  <option value="">Selecciona una condición...</option>
-                  {CONDITION_OPTIONS.map((cond) => (
-                    <option key={cond} value={cond}>
-                      {cond}
-                    </option>
-                  ))}
-                </select>
-                {fieldErrors.condition && (
-                  <p id="condition-error" className="pf-error" role="alert">
-                    {fieldErrors.condition}
+                  className={`pf-input ${fieldErrors.provenance ? "pf-input--error" : ""}`}
+                  aria-invalid={fieldErrors.provenance ? true : undefined}
+                  aria-describedby={fieldErrors.provenance ? "provenance-error" : undefined}
+                />
+                {fieldErrors.provenance ? (
+                  <p id="provenance-error" className="pf-error" role="alert">
+                    {fieldErrors.provenance}
                   </p>
+                ) : (
+                  <p className="text-xs text-slate-500 mt-1">Mínimo 10 caracteres.</p>
+                )}
+              </div>
+
+              {/* Botón para guardar solo datos de texto */}
+              <div className="flex justify-end pt-3">
+                <Button
+                  type="submit"
+                  variant="secondary"
+                  disabled={saving || submittingReview}
+                >
+                  {saving ? "Guardando…" : "Guardar cambios de texto"}
+                </Button>
+              </div>
+            </form>
+          </Card>
+
+          {/* Sección de Archivos del Expediente (Fotos y Certificado) */}
+          <Card>
+            <h2 className="text-lg font-bold text-slate-900 mb-1">
+              Archivos del expediente
+            </h2>
+            <p className="text-xs text-slate-600 mb-6">
+              Adjunta las fotografías descriptivas de la pieza y, si dispones de él, el certificado de autenticidad en PDF.
+            </p>
+
+            {/* Subsección: Fotografías */}
+            <div className="mb-6 pb-6 border-b border-slate-200">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                <div>
+                  <h3 className="font-semibold text-sm text-slate-900">
+                    Fotografías del artículo{" "}
+                    <span className="text-red-600 font-normal">* (obligatoria al menos 1)</span>
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Formatos JPG, PNG o WebP. Tamaño máximo 10 MB por imagen.
+                  </p>
+                </div>
+                <span className="text-xs font-semibold px-2 py-1 bg-slate-100 rounded text-slate-700 self-start sm:self-auto">
+                  {photosCount} foto(s) cargada(s)
+                </span>
+              </div>
+
+              {/* Miniaturas de fotos cargadas */}
+              {photos.length > 0 ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mb-4">
+                  {photos.map((photo) => (
+                    <div
+                      key={photo.id}
+                      className="border border-slate-200 rounded-lg overflow-hidden bg-slate-50 shadow-sm"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={`/api/files/${photo.id}`}
+                        alt={photo.originalName || "Fotografía"}
+                        className="w-full h-32 object-cover"
+                        loading="lazy"
+                      />
+                      <div className="p-2 text-xs text-slate-600 bg-white border-t border-slate-100">
+                        <span className="truncate block font-medium" title={photo.originalName}>
+                          {photo.originalName}
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {(photo.size / (1024 * 1024)).toFixed(2)} MB
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="border border-dashed border-amber-300 bg-amber-50 rounded-lg p-4 mb-4 text-center">
+                  <p className="text-xs text-amber-900 font-medium">
+                    ⚠️ Aún no has subido ninguna fotografía. Debes subir al menos una foto para poder enviar el artículo a verificación.
+                  </p>
+                </div>
+              )}
+
+              {/* Control de carga de fotografía */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                <input
+                  type="file"
+                  id="foto-upload"
+                  ref={photoInputRef}
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handlePhotoUpload}
+                  disabled={uploadingPhoto || uploadingCert}
+                  className="pf-input text-xs"
+                />
+                {uploadingPhoto && (
+                  <span className="text-xs text-slate-600 font-medium animate-pulse whitespace-nowrap">
+                    Subiendo archivo…
+                  </span>
                 )}
               </div>
             </div>
 
-            {/* Precio inicial */}
-            <TextField
-              label="Precio inicial (USD)"
-              name="initialPrice"
-              type="text"
-              value={formData.initialPrice}
-              onChange={handleChange}
-              placeholder="150.00"
-              error={fieldErrors.initialPrice}
-              required
-              disabled={saving || submittingReview}
-            />
+            {/* Subsección: Certificado de autenticidad */}
+            <div>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                <div>
+                  <h3 className="font-semibold text-sm text-slate-900">
+                    Certificado de autenticidad <span className="text-slate-500 font-normal">(opcional)</span>
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Formato PDF. Tamaño máximo 20 MB.
+                  </p>
+                </div>
+              </div>
 
-            {/* Descripción */}
-            <div className="pf-field">
-              <label htmlFor="description" className="pf-label">
-                Descripción detallada <span aria-hidden="true">*</span>
-              </label>
-              <textarea
-                id="description"
-                name="description"
-                rows={5}
-                value={formData.description}
-                onChange={handleChange}
-                placeholder="Detalla materiales, dimensiones, fabricante, época..."
-                disabled={saving || submittingReview}
-                className={`pf-input ${fieldErrors.description ? "pf-input--error" : ""}`}
-                aria-invalid={fieldErrors.description ? true : undefined}
-                aria-describedby={fieldErrors.description ? "description-error" : undefined}
-              />
-              {fieldErrors.description ? (
-                <p id="description-error" className="pf-error" role="alert">
-                  {fieldErrors.description}
-                </p>
+              {/* Lista de certificados cargados */}
+              {certificates.length > 0 ? (
+                <div className="space-y-2 mb-4">
+                  {certificates.map((cert) => (
+                    <div
+                      key={cert.id}
+                      className="flex items-center justify-between p-3 border border-slate-200 rounded-lg bg-slate-50"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="text-xl" aria-hidden="true">
+                          📄
+                        </span>
+                        <div className="truncate">
+                          <p className="text-sm font-semibold text-slate-800 truncate">
+                            {cert.originalName}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {(cert.size / (1024 * 1024)).toFixed(2)} MB
+                          </p>
+                        </div>
+                      </div>
+                      <a
+                        href={`/api/files/${cert.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="pf-btn-secondary text-xs py-1 px-3 whitespace-nowrap"
+                      >
+                        Ver PDF ↗
+                      </a>
+                    </div>
+                  ))}
+                </div>
               ) : (
-                <p className="text-xs text-slate-500 mt-1">Mínimo 20 caracteres.</p>
-              )}
-            </div>
-
-            {/* Procedencia */}
-            <div className="pf-field">
-              <label htmlFor="provenance" className="pf-label">
-                Procedencia e Historia <span aria-hidden="true">*</span>
-              </label>
-              <textarea
-                id="provenance"
-                name="provenance"
-                rows={4}
-                value={formData.provenance}
-                onChange={handleChange}
-                placeholder="Historial de adquisición, herencia, certificados de autenticidad..."
-                disabled={saving || submittingReview}
-                className={`pf-input ${fieldErrors.provenance ? "pf-input--error" : ""}`}
-                aria-invalid={fieldErrors.provenance ? true : undefined}
-                aria-describedby={fieldErrors.provenance ? "provenance-error" : undefined}
-              />
-              {fieldErrors.provenance ? (
-                <p id="provenance-error" className="pf-error" role="alert">
-                  {fieldErrors.provenance}
+                <p className="text-xs text-slate-500 italic mb-4">
+                  No se ha adjuntado certificado todavía.
                 </p>
-              ) : (
-                <p className="text-xs text-slate-500 mt-1">Mínimo 10 caracteres.</p>
               )}
-            </div>
 
-            {/* Acciones del formulario */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-6 border-t border-slate-200 mt-6">
+              {/* Control de carga de certificado */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                <input
+                  type="file"
+                  id="cert-upload"
+                  ref={certInputRef}
+                  accept="application/pdf"
+                  onChange={handleCertUpload}
+                  disabled={uploadingPhoto || uploadingCert}
+                  className="pf-input text-xs"
+                />
+                {uploadingCert && (
+                  <span className="text-xs text-slate-600 font-medium animate-pulse whitespace-nowrap">
+                    Subiendo archivo…
+                  </span>
+                )}
+              </div>
+            </div>
+          </Card>
+
+          {/* Acciones principales y envío a revisión */}
+          <Card>
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
               <div className="flex items-center gap-2">
                 <Link href="/mis-articulos" className="pf-btn-secondary">
                   Volver
@@ -537,7 +940,7 @@ function EditarArticuloContent() {
                   <Button
                     type="button"
                     variant="secondary"
-                    disabled={saving || submittingReview}
+                    disabled={saving || submittingReview || uploadingPhoto || uploadingCert}
                     onClick={() => setConfirmDeleteOpen(true)}
                   >
                     Eliminar borrador
@@ -545,34 +948,38 @@ function EditarArticuloContent() {
                 )}
               </div>
 
-              <div className="flex items-center gap-2">
-                <Button
-                  type="submit"
-                  variant="secondary"
-                  disabled={saving || submittingReview}
-                >
-                  {saving ? "Guardando…" : "Guardar cambios"}
-                </Button>
-
+              <div className="flex flex-col items-stretch sm:items-end gap-1">
                 <Button
                   type="button"
                   variant="primary"
-                  disabled={saving || submittingReview}
+                  disabled={
+                    saving ||
+                    submittingReview ||
+                    uploadingPhoto ||
+                    uploadingCert ||
+                    photosCount === 0
+                  }
                   onClick={handleSubmitForReview}
                 >
                   {submittingReview ? "Enviando…" : "Enviar a revisión"}
                 </Button>
+
+                {photosCount === 0 && (
+                  <p className="text-xs text-red-600 font-medium mt-1 text-center sm:text-right">
+                    Debes subir al menos una fotografía antes de enviar el artículo a verificación.
+                  </p>
+                )}
               </div>
             </div>
-          </form>
-        </Card>
+          </Card>
+        </div>
       )}
 
       {/* Diálogo para eliminar borrador */}
       <ConfirmDialog
         open={confirmDeleteOpen}
         title="¿Eliminar borrador?"
-        message="Esta acción no se puede deshacer. Se eliminarán permanentemente los datos del artículo."
+        message="Esta acción no se puede deshacer. Se eliminarán permanentemente los datos del artículo y sus archivos adjuntos."
         confirmText="Eliminar"
         cancelText="Cancelar"
         loading={deleting}
