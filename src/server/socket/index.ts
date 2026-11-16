@@ -3,8 +3,16 @@ import type { Server, Socket } from "socket.io";
 import { ZodError } from "zod";
 import { getUserFromCookieHeader } from "@/lib/auth/session";
 import { setSocketServer } from "@/lib/realtime";
+import { activateDueAuctions, closeDueAuctions } from "@/modules/bids/auction-closer";
 import { chatJoinSchema, chatSendSchema, type ChatMessageDto } from "@/modules/chat/chat-rules";
 import { assertCanChat, ChatError, saveMessage, validateRoomAccess } from "@/modules/chat/chat-service";
+
+export const AUCTION_SCHEDULER_INTERVAL_MS = 10_000;
+
+declare global {
+  var __pfAuctionSchedulerTimer: ReturnType<typeof setInterval> | undefined;
+  var __pfAuctionSchedulerRunning: boolean | undefined;
+}
 
 export type SocketUserData = {
   userId: string;
@@ -230,8 +238,54 @@ export async function handleChatSend(
   }
 }
 
+export async function runAuctionLifecycleTick(): Promise<void> {
+  if (globalThis.__pfAuctionSchedulerRunning) return;
+  globalThis.__pfAuctionSchedulerRunning = true;
+  try {
+    await activateDueAuctions();
+    await closeDueAuctions();
+  } catch {
+    // Evitar que un fallo transitorio de conexión tumbe el proceso del servidor.
+  } finally {
+    globalThis.__pfAuctionSchedulerRunning = false;
+  }
+}
+
+export function stopAuctionScheduler(): void {
+  if (globalThis.__pfAuctionSchedulerTimer) {
+    clearInterval(globalThis.__pfAuctionSchedulerTimer);
+    globalThis.__pfAuctionSchedulerTimer = undefined;
+  }
+  globalThis.__pfAuctionSchedulerRunning = false;
+}
+
+/**
+ * Registra un ÚNICO intervalo cada 10 s a nivel de servidor (nunca por conexión de cliente)
+ * para activar subastas programadas vencidas y cerrar/adjudicar subastas activas vencidas,
+ * limpiándolo automáticamente cuando se cierra el servidor HTTP/HTTPS.
+ */
+export function startAuctionScheduler(io: Server): ReturnType<typeof setInterval> {
+  stopAuctionScheduler();
+  const timer = setInterval(() => {
+    void runAuctionLifecycleTick();
+  }, AUCTION_SCHEDULER_INTERVAL_MS);
+  timer.unref?.();
+  globalThis.__pfAuctionSchedulerTimer = timer;
+
+  const httpServer = (io as unknown as { httpServer?: { once?: (ev: string, fn: () => void) => void } })
+    .httpServer;
+  if (httpServer && typeof httpServer.once === "function") {
+    httpServer.once("close", () => {
+      stopAuctionScheduler();
+    });
+  }
+
+  return timer;
+}
+
 export function registerSocketHandlers(io: Server): void {
   setSocketServer(io);
+  startAuctionScheduler(io);
   io.use(authenticateSocketHandshake);
 
   io.on("connection", (socket) => {

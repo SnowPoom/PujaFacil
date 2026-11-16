@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { hasValidRoles } from "@/lib/auth/roles";
 import { emitAuctionUpdated, type AuctionUpdatedPayload } from "@/lib/realtime";
 import { usdAmountSchema } from "@/modules/auctions/auction-schema";
+import { notifyUser } from "@/modules/notifications/notification-service";
 
 const FALLBACK_ALIAS = "Postor";
 
@@ -195,7 +196,7 @@ export async function placeBid(rawInput: PlaceBidInput): Promise<PlaceBidResult>
 
     const article = await tx.article.findUnique({
       where: { id: auction.articleId },
-      select: { ownerId: true },
+      select: { ownerId: true, title: true },
     });
     if (!article) {
       throw new BidError(404, "ARTICLE_NOT_FOUND", "El artículo asociado a la subasta no existe.");
@@ -238,6 +239,8 @@ export async function placeBid(rawInput: PlaceBidInput): Promise<PlaceBidResult>
         acceptedAt: existingByRequest.acceptedAt.toISOString(),
         alias,
         idempotent: true,
+        previousLeaderId: null as string | null,
+        articleTitle: article.title ?? null,
         summary: {
           auctionId,
           highestBid: topBid ? new Prisma.Decimal(topBid.amount).toFixed(2) : null,
@@ -300,6 +303,8 @@ export async function placeBid(rawInput: PlaceBidInput): Promise<PlaceBidResult>
 
     const bidCount = await tx.bid.count({ where: { auctionId } });
     const formattedAmount = new Prisma.Decimal(createdBid.amount).toFixed(2);
+    const previousLeaderId =
+      currentHighest && currentHighest.buyerId !== buyerId ? currentHighest.buyerId : null;
 
     return {
       id: createdBid.id,
@@ -308,6 +313,8 @@ export async function placeBid(rawInput: PlaceBidInput): Promise<PlaceBidResult>
       acceptedAt: createdBid.acceptedAt.toISOString(),
       alias,
       idempotent: false,
+      previousLeaderId,
+      articleTitle: article.title ?? null,
       summary: {
         auctionId,
         highestBid: formattedAmount,
@@ -318,12 +325,36 @@ export async function placeBid(rawInput: PlaceBidInput): Promise<PlaceBidResult>
     };
   });
 
-  // 3. Emitir evento WebSocket FUERA de la transacción solo cuando se registró una oferta nueva.
+  // 3. Emitir evento WebSocket y notificar al líder anterior superado FUERA de la transacción.
   if (!txResult.idempotent) {
     emitAuctionUpdated(auctionId, txResult.summary);
+    if (txResult.previousLeaderId) {
+      try {
+        const lotLabel = txResult.articleTitle
+          ? `«${txResult.articleTitle}»`
+          : `la subasta #${auctionId}`;
+        await notifyUser({
+          userId: txResult.previousLeaderId,
+          type: "OUTBID",
+          title: "Tu oferta fue superada",
+          body: `Otro participante registró una oferta mayor de $${txResult.amount} USD en ${lotLabel}.`,
+          url: `/subastas/${auctionId}`,
+        });
+      } catch {
+        // Un fallo en el aviso no debe revertir ni romper la oferta ya confirmada en PostgreSQL.
+      }
+    }
   }
 
-  return txResult;
+  return {
+    id: txResult.id,
+    amount: txResult.amount,
+    auctionId: txResult.auctionId,
+    acceptedAt: txResult.acceptedAt,
+    alias: txResult.alias,
+    idempotent: txResult.idempotent,
+    summary: txResult.summary,
+  };
 }
 
 /**

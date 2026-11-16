@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { AuctionStatus } from "@prisma/client";
 import Badge from "@/components/ui/Badge";
 import Card from "@/components/ui/Card";
+import NotificationBellLink from "@/components/notifications/NotificationBellLink";
 import { hasRole } from "@/lib/auth/guards";
 import { requireCurrentUser } from "@/lib/auth/server";
 import { getUserBids, type UserBidItem } from "@/modules/bids/bid-service";
@@ -79,6 +80,7 @@ async function MisOfertasContent() {
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
+          <NotificationBellLink className="pf-btn-secondary" />
           <Link href="/subastas" className="pf-btn">
             Ver catálogo de subastas
           </Link>
