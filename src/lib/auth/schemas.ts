@@ -28,3 +28,12 @@ export const profileSchema = z.object({
   telefono: z.string().trim().max(25).regex(/^[+\d\s()-]*$/, "Ingresa un teléfono válido.").optional(),
   direccion: z.string().trim().max(250).optional(),
 }).strict();
+
+// Motivo cerrado de aprobación: sin texto libre que pueda introducir PII en auditoría.
+export const APPROVAL_REASON = "REVISION_DOCUMENTAL_COHERENTE";
+export const activationSchema = z.object({
+  reviewId: z.string().min(1).max(128),
+  documentoRevisadoId: z.string().min(1).max(128),
+  coherenciaConfirmada: z.literal(true, { error: "Confirma la revisión de los datos y del documento." }),
+  motivoCodigo: z.literal(APPROVAL_REASON, { error: "Selecciona un motivo de aprobación válido." }),
+}).strict();
