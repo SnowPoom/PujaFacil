@@ -9,6 +9,7 @@ const db = vi.hoisted(() => ({
   auctionAlias: { findUnique: vi.fn(), create: vi.fn(), findMany: vi.fn() },
   bid: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), count: vi.fn() },
   chatMessage: { create: vi.fn(), findMany: vi.fn() },
+  notification: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn(), count: vi.fn(), updateMany: vi.fn() },
   $queryRaw: vi.fn(),
   $transaction: vi.fn(),
 }));
@@ -39,6 +40,11 @@ import { getAuctionBids, getUserBids, placeBid } from "../modules/bids/bid-servi
 import { GET as getAuctionBidsRoute, POST as postAuctionBidRoute } from "../app/api/auctions/[id]/bids/route";
 import { GET as getMyBidsRoute } from "../app/api/me/bids/route";
 import { GET as getChatMessages } from "../app/api/chat/messages/route";
+import {
+  listNotifications,
+  markNotificationRead,
+  notifyUser,
+} from "../modules/notifications/notification-service";
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -1108,5 +1114,71 @@ describe("Kevin 15/11 — Etapa 4: GET /api/me/bids", () => {
       },
     });
     expect(JSON.stringify(payload)).not.toContain("bid-other");
+  });
+});
+
+describe("Kevin 16/11 — Etapa 1: servicio de notificaciones", () => {
+  const createdAt = new Date("2026-11-16T13:00:00.000Z");
+
+  it("notifyUser guarda en PostgreSQL ANTES de emitir notification:new a la sala privada user:<id> sin exponer el userId", async () => {
+    const order: string[] = [];
+    const emitFn = vi.fn().mockImplementation(() => order.push("socket:emit"));
+    const toFn = vi.fn().mockReturnValue({ emit: emitFn });
+    setSocketServer({ to: toFn } as never);
+    db.notification.create.mockImplementationOnce(async () => {
+      order.push("db:create");
+      return { id: "n1", type: "OUTBID", title: "Superada", body: "Otra oferta", url: "/subastas/sub-1", readAt: null, createdAt };
+    });
+
+    const dto = await notifyUser({ userId: "u1", type: "OUTBID", title: "Superada", body: "Otra oferta", url: "/subastas/sub-1" });
+
+    expect(order).toEqual(["db:create", "socket:emit"]);
+    expect(toFn).toHaveBeenCalledWith("user:u1");
+    const payload = emitFn.mock.calls[0][1];
+    expect(emitFn.mock.calls[0][0]).toBe("notification:new");
+    expect(payload).toEqual({ id: "n1", type: "OUTBID", title: "Superada", body: "Otra oferta", url: "/subastas/sub-1", createdAt: createdAt.toISOString() });
+    expect(JSON.stringify(payload)).not.toContain("u1");
+    expect(dto.readAt).toBeNull();
+    setSocketServer(undefined as never);
+  });
+
+  it("notifyUser reemplaza URLs externas por /notificaciones", async () => {
+    db.notification.create.mockImplementationOnce(async ({ data }: { data: { url: string } }) => ({
+      id: "n2", type: "X", title: "t", body: "b", url: data.url, readAt: null, createdAt,
+    }));
+    const dto = await notifyUser({ userId: "u1", type: "X", title: "t", body: "b", url: "https://malicioso.test" });
+    expect(dto.url).toBe("/notificaciones");
+  });
+
+  it("listNotifications filtra por titular y devuelve el contador de no leídas", async () => {
+    db.notification.findMany.mockResolvedValueOnce([
+      { id: "n1", type: "OUTBID", title: "t", body: "b", url: "/x", readAt: null, createdAt },
+    ]);
+    db.notification.count.mockResolvedValueOnce(1);
+    const res = await listNotifications("u1");
+    expect(db.notification.findMany.mock.calls[0][0].where).toEqual({ userId: "u1" });
+    expect(db.notification.count.mock.calls[0][0].where).toEqual({ userId: "u1", readAt: null });
+    expect(res).toEqual({ items: [expect.objectContaining({ id: "n1", readAt: null })], unreadCount: 1 });
+  });
+
+  it("markNotificationRead solo marca la propia: la de otro usuario responde 404 y no se actualiza", async () => {
+    db.notification.findFirst.mockResolvedValueOnce(null);
+    await expect(markNotificationRead("userA", "n-de-B")).rejects.toMatchObject({ status: 404, code: "NOTIFICACION_NO_ENCONTRADA" });
+    expect(db.notification.findFirst.mock.calls[0][0].where).toEqual({ id: "n-de-B", userId: "userA" });
+    expect(db.notification.updateMany).not.toHaveBeenCalled();
+
+    const readAt = new Date("2026-11-16T13:05:00.000Z");
+    db.notification.findFirst
+      .mockResolvedValueOnce({ id: "n1", type: "t", title: "t", body: "b", url: "/x", readAt: null, createdAt })
+      .mockResolvedValueOnce({ id: "n1", type: "t", title: "t", body: "b", url: "/x", readAt, createdAt });
+    db.notification.updateMany.mockResolvedValueOnce({ count: 1 });
+    const ok = await markNotificationRead("userA", "n1");
+    expect(db.notification.updateMany.mock.calls[0][0].where).toEqual({ id: "n1", userId: "userA", readAt: null });
+    expect(ok.readAt).toBe(readAt.toISOString());
+
+    // Idempotente: ya leída no vuelve a actualizar
+    db.notification.findFirst.mockResolvedValueOnce({ id: "n1", type: "t", title: "t", body: "b", url: "/x", readAt, createdAt });
+    await markNotificationRead("userA", "n1");
+    expect(db.notification.updateMany).toHaveBeenCalledTimes(1);
   });
 });
