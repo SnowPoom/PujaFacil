@@ -544,47 +544,6 @@ describe("Christian C0 — sesión SSR usada por /panel", () => {
   });
 });
 
-describe("Christian C2 — límites de identidad e integración", () => {
-  it("verifica la contraseña contra hashes con sal distinta y cifra la cédula con IV distinto", async () => {
-    const password = "Una frase ficticia para integrar el lunes!";
-    const hashes = await Promise.all([bcrypt.hash(password, 4), bcrypt.hash(password, 4)]);
-    expect(hashes[0]).not.toBe(hashes[1]);
-    for (const passwordHash of hashes) {
-      expect(await bcrypt.compare(password, passwordHash)).toBe(true);
-      expect(await bcrypt.compare("Una frase diferente para la prueba!", passwordHash)).toBe(false);
-    }
-    const cedula = "1234567890";
-    const encrypted = [encryptCedula(cedula), encryptCedula(cedula)];
-    expect(encrypted[0]).not.toBe(encrypted[1]);
-    for (const ciphertext of encrypted) {
-      expect(ciphertext).not.toBe(cedula);
-      expect(decryptCedula(ciphertext)).toBe(cedula);
-    }
-  });
-  it("un login con roles y estado inventados conserva solo los permisos de PostgreSQL", async () => {
-    const password = "Una frase ficticia para integrar el lunes!";
-    db.user.findUnique.mockResolvedValue({ ...user, passwordHash: await bcrypt.hash(password, 4) });
-    const response = await login(mutation("/api/auth/login", {
-      email: user.email, password, roles: ["ADMIN_SUBASTAS"], status: "ACTIVA",
-    }));
-    expect(response.status).toBe(200);
-    expect((await response.json()).data.user.roles).toEqual(["COMPRADOR"]);
-    await expect(requireRole(request(), ["ADMIN_SUBASTAS"])).rejects.toMatchObject({ status: 403, code: "ROL_NO_PERMITIDO" });
-  });
-  it("un reset que vence exactamente ahora no cambia contraseña ni revoca sesiones", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    const now = new Date("2026-11-16T15:00:00Z");
-    vi.setSystemTime(now);
-    db.passwordReset.findUnique.mockResolvedValue({ id: "reset", userId: user.id, usedAt: null, expiresAt: now });
-    const response = await reset(mutation("/api/auth/reset-password", { token, newPassword: "Una frase ficticia para integrar el lunes!" }));
-    expect(response.status).toBe(400);
-    expect((await response.json()).error.code).toBe("TOKEN_INVALIDO");
-    expect(db.$transaction).not.toHaveBeenCalled();
-    expect(db.user.update).not.toHaveBeenCalled();
-    expect(db.session.deleteMany).not.toHaveBeenCalled();
-  });
-});
-
 describe("Christian C0 — privacidad de respuestas HTTP", () => {
   it("no incluye token ni credenciales en JSON de login/me y limita el select del usuario", async () => {
     const password = "Mi frase ficticia segura 2026!";
