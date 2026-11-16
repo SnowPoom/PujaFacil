@@ -2,9 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
 
-const db = vi.hoisted(() => ({ user: { findUnique: vi.fn() }, session: { findUnique: vi.fn(), create: vi.fn(), deleteMany: vi.fn() } }));
+const db = vi.hoisted(() => ({
+  user: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findMany: vi.fn(), count: vi.fn(), delete: vi.fn() },
+  userRole: { deleteMany: vi.fn() },
+  auditEvent: { deleteMany: vi.fn(), findFirst: vi.fn() },
+  passwordReset: { create: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
+  session: { findUnique: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
+  $transaction: vi.fn(), $queryRaw: vi.fn(),
+}));
 vi.mock("../lib/prisma", () => ({ prisma: db }));
 const requestCookies = vi.hoisted(() => vi.fn());
+vi.mock("../lib/audit", async (importOriginal) => ({ ...await importOriginal<typeof import("../lib/audit")>(), writeAuditEvent: vi.fn().mockResolvedValue({}), sanitizeAuditDetail: vi.fn() }));
+vi.mock("../lib/uploads", () => ({
+  validateUpload: vi.fn(), saveValidatedUpload: vi.fn(),
+  UploadError: class extends Error { constructor(public status: number, public code: string, message: string) { super(message); } },
+}));
 vi.mock("next/headers", () => ({ cookies: requestCookies }));
 import { encryptCedula, decryptCedula } from "../lib/auth/crypto";
 import { loginSchema, registerSchema, passwordSchema, forgotSchema } from "../lib/auth/schemas";
@@ -16,6 +28,16 @@ import { POST as login } from "../app/api/auth/login/route";
 import { POST as logout } from "../app/api/auth/logout/route";
 import { GET as me } from "../app/api/auth/me/route";
 import { getCurrentUser, requireCurrentUser } from "../lib/auth/server";
+import { writeAuditEvent, sanitizeAuditDetail } from "../lib/audit";
+import { POST as forgot } from "../app/api/auth/forgot-password/route";
+import { POST as reset } from "../app/api/auth/reset-password/route";
+import { PATCH as profile } from "../app/api/auth/profile/route";
+import { GET as accounts } from "../app/api/admin/users/route";
+import { POST as activate } from "../app/api/admin/users/[id]/activate/route";
+import { GET as reviewAccount } from "../app/api/admin/users/[id]/route";
+import { APPROVAL_REASON } from "../lib/auth/schemas";
+import { POST as register } from "../app/api/auth/register/route";
+import { saveValidatedUpload, validateUpload, UploadError } from "../lib/uploads";
 
 const token = "a".repeat(64);
 const user = { id: "ficticio", nombreCompleto: "Cuenta Ficticia", email: "demo@example.test", status: "ACTIVA" as const, roles: [{ role: "COMPRADOR" as const }] };
@@ -25,6 +47,7 @@ beforeEach(() => {
   db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 60_000), user });
   db.user.findUnique.mockResolvedValue(user);
   requestCookies.mockResolvedValue({ toString: () => "" });
+  db.$transaction.mockImplementation(async (work) => typeof work === "function" ? work(db) : Promise.all(work));
 });
 afterEach(() => vi.useRealTimers());
 
@@ -83,6 +106,226 @@ describe("Christian C0 — contrato HTTP con DB simulada", () => {
   });
 });
 const request = () => new Request("http://localhost:3000/api/test", { headers: { cookie: `pf_session=${token}` } });
+
+const mutation = (path: string, body: unknown, method = "POST") => new Request(`http://localhost:3000${path}`, {
+  method, headers: { origin: "http://localhost:3000", cookie: `pf_session=${token}`, "Content-Type": "application/json" }, body: JSON.stringify(body),
+});
+const asAdmin = () => db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 60000), user: { ...user, roles: [{ role: "ADMIN_SUBASTAS" }] } });
+
+describe("Christian C1 — recuperación, perfil y activación", () => {
+  const newPassword = "Otra frase ficticia extensa para pruebas!";
+  const resetRecord = () => ({ id: "reset", userId: user.id, usedAt: null, expiresAt: new Date(Date.now() + 600000) });
+  it("recuperación responde igual exista o no el correo y almacena solo hash por 10 minutos", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const logger = vi.spyOn(console, "log").mockImplementation(() => {});
+    const before = Date.now();
+    const existing = await forgot(mutation("/api/auth/forgot-password", { email: user.email }));
+    const saved = db.passwordReset.create.mock.calls[0][0].data;
+    const link = logger.mock.calls[0][0] as string;
+    const raw = new URL(link.replace("[auth] Recuperación: ", "")).searchParams.get("token")!;
+    expect(raw).toMatch(/^[a-f\d]{64}$/);
+    expect(saved.tokenHash).toBe(hashToken(raw));
+    expect(saved.tokenHash).not.toBe(raw);
+    expect(saved.expiresAt.getTime() - before).toBeGreaterThanOrEqual(600000);
+    expect(saved.expiresAt.getTime() - before).toBeLessThan(601000);
+    db.user.findUnique.mockResolvedValue(null);
+    const absent = await forgot(mutation("/api/auth/forgot-password", { email: "ausente@example.test" }));
+    expect(existing.status).toBe(200); expect(absent.status).toBe(200);
+    expect(await existing.json()).toEqual(await absent.json());
+    expect(db.passwordReset.create).toHaveBeenCalledOnce();
+  });
+  it("no imprime tokens en producción", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const logger = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect((await forgot(mutation("/api/auth/forgot-password", { email: user.email }))).status).toBe(200);
+    expect(logger).not.toHaveBeenCalled();
+  });
+  it.each([null, { ...resetRecord(), usedAt: new Date() }, { ...resetRecord(), expiresAt: new Date(0) }])("rechaza token inexistente, usado o caducado: %j", async (record) => {
+    db.passwordReset.findUnique.mockResolvedValue(record);
+    const result = await reset(mutation("/api/auth/reset-password", { token, newPassword }));
+    expect(result.status).toBe(400); expect(await result.json()).toMatchObject({ error: { code: "TOKEN_INVALIDO" } });
+    expect(db.user.update).not.toHaveBeenCalled(); expect(db.session.deleteMany).not.toHaveBeenCalled();
+  });
+  it("cambia hash bcrypt coste 12, consume token y revoca todas las sesiones en transacción", async () => {
+    db.passwordReset.findUnique.mockResolvedValue(resetRecord());
+    db.passwordReset.updateMany.mockResolvedValue({ count: 1 });
+    const response = await reset(mutation("/api/auth/reset-password", { token, newPassword }));
+    expect(response.status).toBe(200);
+    const saved = db.user.update.mock.calls[0][0];
+    expect(saved.where.id).toBe(user.id); expect(bcrypt.getRounds(saved.data.passwordHash)).toBe(12);
+    expect(await bcrypt.compare(newPassword, saved.data.passwordHash)).toBe(true);
+    expect(db.passwordReset.updateMany.mock.calls[0][0].where).toMatchObject({ id: "reset", usedAt: null, expiresAt: { gt: expect.any(Date) } });
+    expect(db.session.deleteMany).toHaveBeenCalledWith({ where: { userId: user.id } });
+    expect(db.$transaction).toHaveBeenCalledOnce();
+    expect(response.headers.get("set-cookie")).toContain("Expires=Thu, 01 Jan 1970");
+  });
+  it("si otro request consumió el token, no cambia contraseña ni sesiones", async () => {
+    db.passwordReset.findUnique.mockResolvedValue(resetRecord()); db.passwordReset.updateMany.mockResolvedValue({ count: 0 });
+    expect((await reset(mutation("/api/auth/reset-password", { token, newPassword }))).status).toBe(400);
+    expect(db.user.update).not.toHaveBeenCalled(); expect(db.session.deleteMany).not.toHaveBeenCalled();
+  });
+  it("perfil actualiza exclusivamente datos del titular y rechaza roles/status/userId", async () => {
+    db.user.update.mockResolvedValue({ telefono: "0990000000", direccion: "Calle ficticia" });
+    expect((await profile(mutation("/api/auth/profile", { telefono: "0990000000", direccion: "Calle ficticia" }, "PATCH"))).status).toBe(200);
+    expect(db.user.update).toHaveBeenCalledWith({ where: { id: user.id }, data: { telefono: "0990000000", direccion: "Calle ficticia" }, select: { telefono: true, direccion: true } });
+    for (const field of ["roles", "status", "userId", "nombreCompleto"]) expect((await profile(mutation("/api/auth/profile", { [field]: "alterado" }, "PATCH"))).status).toBe(400);
+  });
+  it("sin sesión usuarios devuelve 401, comprador/auditor no pueden listar ni activar", async () => {
+    expect((await accounts(new Request("http://localhost:3000/api/admin/users"))).status).toBe(401);
+    for (const role of ["COMPRADOR", "AUDITOR"]) {
+      db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 60000), user: { ...user, roles: [{ role }] } });
+      expect((await accounts(request())).status).toBe(403);
+      expect((await activate(mutation("/api/admin/users/otro/activate", {}), { params: Promise.resolve({ id: "otro" }) })).status).toBe(403);
+    }
+    expect(db.user.updateMany).not.toHaveBeenCalled();
+  });
+  it("admin lista con paginación y proyección sin datos personales", async () => {
+    asAdmin(); db.user.findMany.mockResolvedValue([{ id: "pendiente", status: "PENDIENTE", roles: [{ role: "VENDEDOR" }], createdAt: new Date(), _count: { files: 1 } }]); db.user.count.mockResolvedValue(21);
+    const response = await accounts(new Request("http://localhost:3000/api/admin/users?page=2&pageSize=10", { headers: { cookie: `pf_session=${token}` } }));
+    expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ data: { page: 2, pages: 3, total: 21, items: [{ hasIdentity: true, roles: ["VENDEDOR"] }] } });
+    const query = db.user.findMany.mock.calls[0][0]; expect(query.skip).toBe(10);
+    for (const key of ["nombreCompleto", "email", "cedulaCifrada", "passwordHash", "files"]) expect(query.select).not.toHaveProperty(key);
+  });
+  it("activación rechaza la petición antigua sin revisión ni motivo", async () => {
+    asAdmin();
+    expect((await activate(mutation("/api/admin/users/otro/activate", {}), { params: Promise.resolve({ id: "otro" }) })).status).toBe(400);
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it("todas las mutaciones C1 rechazan origen externo antes de consultar DB", async () => {
+    for (const handler of [forgot, reset, profile]) {
+      const req = new Request("http://localhost:3000/api/auth/test", { method: "POST", headers: { origin: "https://otro.test" } });
+      expect((await handler(req)).status).toBe(403);
+    }
+    expect(db.user.findUnique).not.toHaveBeenCalled(); expect(db.passwordReset.findUnique).not.toHaveBeenCalled();
+  });
+  it("login registra éxito y fracaso sin contraseña ni correo", async () => {
+    const password = "Frase ficticia extensa para login!";
+    db.user.findUnique.mockResolvedValue({ ...user, passwordHash: await bcrypt.hash(password, 4) });
+    await login(mutation("/api/auth/login", { email: user.email, password }));
+    await login(mutation("/api/auth/login", { email: user.email, password: "incorrecta" }));
+    expect(writeAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "LOGIN", result: "EXITO" }));
+    expect(writeAuditEvent).toHaveBeenCalledWith({ action: "LOGIN", resourceType: "User", result: "DENEGADO" });
+    const events = JSON.stringify(vi.mocked(writeAuditEvent).mock.calls);
+    expect(events).not.toContain(password); expect(events).not.toContain(user.email);
+  });
+});
+
+describe("Christian C1 — revisión documental con dependencias J2 simuladas", () => {
+  const updatedAt = new Date("2026-11-15T18:00:00Z");
+  const input = { reviewId: "revision", documentoRevisadoId: "identidad", coherenciaConfirmada: true, motivoCodigo: APPROVAL_REASON };
+  const context = { params: Promise.resolve({ id: "otro" }) };
+  const pending = () => ({ id: "otro", status: "PENDIENTE", updatedAt, nombreCompleto: "Persona ficticia", cedulaCifrada: encryptCedula("1234567890"), files: [{ id: "identidad", mimeType: "image/png" }] });
+  const dataEvent = () => ({ id: "revision", actorId: user.id, action: "CUENTA_DATOS_CONSULTADOS", resourceId: "identidad", resourceType: "FileRecord", createdAt: new Date(), detail: { accountVersion: updatedAt.getTime() } });
+  beforeEach(() => {
+    asAdmin(); db.user.findUnique.mockResolvedValue(pending());
+    db.auditEvent.findFirst.mockResolvedValueOnce(dataEvent()).mockResolvedValue({ id: "lectura" });
+    vi.mocked(sanitizeAuditDetail).mockReturnValue({ motivoCodigo: "[REDACTADO]" });
+  });
+  it("admin consulta solo nombre/cédula y referencia protegida; auditoría no incluye identidad", async () => {
+    vi.mocked(writeAuditEvent).mockResolvedValue({ id: "revision" } as never);
+    const response = await reviewAccount(request(), context);
+    expect(response.status).toBe(200); expect(response.headers.get("cache-control")).toContain("no-store");
+    const payload = await response.json();
+    expect(payload.data.user).toEqual({ nombreCompleto: "Persona ficticia", cedula: "1234567890" });
+    expect(payload.data.identity).toEqual({ id: "identidad", mimeType: "image/png" });
+    const event = vi.mocked(writeAuditEvent).mock.calls[0][0];
+    expect(event).toMatchObject({ actorId: user.id, action: "CUENTA_DATOS_CONSULTADOS", resourceId: "identidad", detail: { accountVersion: updatedAt.getTime() } });
+    expect(JSON.stringify(event)).not.toContain("1234567890"); expect(JSON.stringify(event)).not.toContain("Persona ficticia");
+  });
+  it.each(["COMPRADOR", "AUDITOR", "VERIFICADOR"])("%s no puede revisar ni activar", async (role) => {
+    db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 60000), user: { ...user, roles: [{ role }] } });
+    expect((await reviewAccount(request(), context)).status).toBe(403);
+    expect((await activate(mutation("/api/admin/users/otro/activate", input), context)).status).toBe(403);
+    expect(writeAuditEvent).not.toHaveBeenCalled(); expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it("sin sesión no revela los datos", async () => {
+    expect((await reviewAccount(new Request("http://localhost:3000/api/admin/users/otro"), context)).status).toBe(401);
+  });
+  it("sin documento no se abre revisión ni se activa; activa no puede revisarse", async () => {
+    db.user.findUnique.mockResolvedValue({ ...pending(), files: [] });
+    expect((await reviewAccount(request(), context)).status).toBe(409);
+    expect((await activate(mutation("/api/admin/users/otro/activate", input), context)).status).toBe(409);
+    db.user.findUnique.mockResolvedValue({ ...pending(), status: "ACTIVA" });
+    expect((await reviewAccount(request(), context)).status).toBe(404);
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it.each([{ reviewId: "revision", coherenciaConfirmada: true }, { ...input, motivoCodigo: "" }, { ...input, motivoCodigo: "Texto con datos privados" }, { ...input, coherenciaConfirmada: false }, ...["REVISION_INCOMPLETA", "DOCUMENTO_NO_DISPONIBLE", "REVISION_NO_PERMITIDA"].map((motivoCodigo) => ({ ...input, motivoCodigo }))])("sin motivo/confirmación válida se rechaza: %j", async (body) => {
+    expect((await activate(mutation("/api/admin/users/otro/activate", body), context)).status).toBe(400);
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it("rechaza documento de otra cuenta aunque el cliente confirme coherencia", async () => {
+    const response = await activate(mutation("/api/admin/users/otro/activate", { ...input, documentoRevisadoId: "ajeno" }), context);
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: { code: "DOCUMENTO_NO_CORRESPONDE" } });
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it("rechaza una revisión inventada y exige actor, archivo y vigencia en la consulta al servidor", async () => {
+    db.auditEvent.findFirst.mockReset().mockResolvedValue(null);
+    const response = await activate(mutation("/api/admin/users/otro/activate", input), context);
+    expect(response.status).toBe(409);
+    expect(db.auditEvent.findFirst.mock.calls[0][0].where).toMatchObject({ id: "revision", actorId: user.id, resourceId: "identidad", createdAt: { gte: expect.any(Date) } });
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it("rechaza revisión si los datos registrados cambiaron", async () => {
+    db.auditEvent.findFirst.mockReset().mockResolvedValue({ ...dataEvent(), detail: { accountVersion: 0 } });
+    expect((await activate(mutation("/api/admin/users/otro/activate", input), context)).status).toBe(409);
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it("confirmación del navegador no sustituye una consulta de documento auditada por Jonathan", async () => {
+    db.auditEvent.findFirst.mockReset().mockResolvedValueOnce(dataEvent()).mockResolvedValue(null);
+    const response = await activate(mutation("/api/admin/users/otro/activate", input), context);
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ error: { code: "LECTURA_AUDITADA_REQUERIDA" } });
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it("motivo redactado bloquea activación en vez de simular una auditoría válida", async () => {
+    const response = await activate(mutation("/api/admin/users/otro/activate", input), context);
+    expect(response.status).toBe(503); expect(await response.json()).toMatchObject({ error: { code: "MOTIVO_AUDITORIA_NO_DISPONIBLE" } });
+    expect(db.user.update).not.toHaveBeenCalled();
+  });
+  it("con J2 compatible simulado activa y conserva motivo, actor, cuenta y resultado en transacción", async () => {
+    vi.mocked(sanitizeAuditDetail).mockReturnValue({ motivoCodigo: APPROVAL_REASON });
+    vi.mocked(writeAuditEvent).mockResolvedValue({ detail: { motivoCodigo: APPROVAL_REASON } } as never);
+    expect((await activate(mutation("/api/admin/users/otro/activate", input), context)).status).toBe(200);
+    expect(db.user.update).toHaveBeenCalledWith({ where: { id: "otro" }, data: { status: "ACTIVA" } });
+    expect(writeAuditEvent).toHaveBeenCalledWith({ actorId: user.id, action: "CUENTA_ACTIVADA", resourceType: "User", resourceId: "otro", result: "EXITO", detail: { previousStatus: "PENDIENTE", status: "ACTIVA", motivoCodigo: APPROVAL_REASON } }, db);
+    expect(db.$transaction).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Christian C1 — registro con helper compartido", () => {
+  function registration(roles = ["COMPRADOR"]) {
+    const form = new FormData();
+    for (const [key, value] of Object.entries({ nombreCompleto: "Persona Ficticia", email: "demo@example.test", password: "Mi frase ficticia segura 2026!", cedula: "1234567890", roles: JSON.stringify(roles) })) form.set(key, value);
+    form.set("identidad", new File(["documento ficticio"], "identidad.png", { type: "image/png" }));
+    return new Request("http://localhost:3000/api/auth/register", { method: "POST", headers: { origin: "http://localhost:3000" }, body: form });
+  }
+  it("crea pendiente con hash/cifrado, roles limitados, documento privado y auditoría", async () => {
+    db.user.create.mockResolvedValue({ id: "nuevo" });
+    const response = await register(registration(["COMPRADOR", "VENDEDOR"]));
+    expect(response.status).toBe(201);
+    expect(response.headers.has("set-cookie")).toBe(false);
+    const saved = db.user.create.mock.calls[0][0].data;
+    expect(saved.status).toBe("PENDIENTE"); expect(saved.cedulaCifrada).not.toBe("1234567890");
+    expect(bcrypt.getRounds(saved.passwordHash)).toBe(12);
+    expect(saveValidatedUpload).toHaveBeenCalledWith(expect.any(File), { ownerId: "nuevo", kind: "IDENTIDAD" });
+    expect(writeAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "CUENTA_REGISTRADA", detail: { roles: ["COMPRADOR", "VENDEDOR"], status: "PENDIENTE" } }), db);
+    const body = await response.text();
+    for (const secret of ["passwordHash", "cedulaCifrada", "1234567890", "demo@example.test"]) expect(body).not.toContain(secret);
+  });
+  it("rechaza perfiles privilegiados y archivo inválido antes de crear cuenta", async () => {
+    expect((await register(registration(["ADMIN_SUBASTAS"]))).status).toBe(400);
+    vi.mocked(validateUpload).mockRejectedValueOnce(new UploadError(400, "ARCHIVO_INVALIDO", "Archivo inválido."));
+    expect((await register(registration())).status).toBe(400);
+    expect(db.user.create).not.toHaveBeenCalled();
+  });
+  it("si falla la subida elimina solo la cuenta y roles de ese intento", async () => {
+    db.user.create.mockResolvedValue({ id: "nuevo" });
+    vi.mocked(saveValidatedUpload).mockRejectedValueOnce(new UploadError(500, "ARCHIVO_NO_GUARDADO", "No se pudo guardar."));
+    expect((await register(registration())).status).toBe(500);
+    expect(db.auditEvent.deleteMany).toHaveBeenCalledWith({ where: { actorId: "nuevo", action: "CUENTA_REGISTRADA" } });
+    expect(db.userRole.deleteMany).toHaveBeenCalledWith({ where: { userId: "nuevo" } });
+    expect(db.user.delete).toHaveBeenCalledWith({ where: { id: "nuevo" } });
+  });
+});
 
 describe("Christian C0 — autenticación", () => {
   it("verifica bcrypt con sal y rechaza otra contraseña", async () => {
