@@ -8,6 +8,7 @@ import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import TextField from "@/components/ui/TextField";
+import NotificationBellLink from "@/components/notifications/NotificationBellLink";
 import { GENERAL_ROOM, MAX_CHAT_TEXT, parseRoom, type ChatMessageDto } from "@/modules/chat/chat-rules";
 import type { ChatJoinAck, ChatSendAck } from "@/server/socket/index";
 
@@ -217,6 +218,7 @@ export default function ChatRoom() {
               Sala general
             </Link>
           )}
+          <NotificationBellLink className="pf-btn-secondary" />
           <Link href="/panel" className="pf-btn-secondary">
             Volver al panel
           </Link>

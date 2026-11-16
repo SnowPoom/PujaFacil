@@ -6,6 +6,7 @@ import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import TextField from "@/components/ui/TextField";
+import NotificationBellLink from "@/components/notifications/NotificationBellLink";
 import type { AuctionUpdatedPayload } from "@/lib/realtime";
 
 type AuctionStatus =
@@ -320,10 +321,13 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Badge variant={isAuctionActive ? "success" : "accent"}>{snapshot.status}</Badge>
-        <Badge variant={realtimeConnected ? "success" : "neutral"}>
-          {realtimeConnected ? "Tiempo real activo" : "Sincronizando…"}
-        </Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={isAuctionActive ? "success" : "accent"}>{snapshot.status}</Badge>
+          <Badge variant={realtimeConnected ? "success" : "neutral"}>
+            {realtimeConnected ? "Tiempo real activo" : "Sincronizando…"}
+          </Badge>
+        </div>
+        <NotificationBellLink className="pf-btn-secondary text-xs" />
       </div>
 
       <dl className="space-y-2 text-sm border rounded-lg p-3" style={{ borderColor: "var(--pf-border)" }}>
