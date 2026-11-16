@@ -4,13 +4,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
 RUN npm ci
-# Copias explícitas: .env, certificados y storage privados quedan fuera de la imagen.
+# Copias explícitas y .dockerignore excluyen .env, agent y archivos privados.
 COPY src ./src
 COPY public ./public
 COPY server.ts next.config.ts tsconfig.json ./
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATABASE_URL=postgresql://build:build@localhost:5432/build
-RUN npx prisma generate && npm run build
+RUN npm run build
 
 FROM node:24-slim AS runner
 WORKDIR /app

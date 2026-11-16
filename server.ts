@@ -6,12 +6,12 @@ import { Server } from "socket.io";
 import { registerSocketHandlers } from "@/server/socket/index";
 
 const dev = process.env.NODE_ENV !== "production";
-const port = Number(process.env.PORT ?? 3000);
 
 const app = next({ dev });
 const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
+  const port = Number(process.env.PORT ?? 3000);
   const keyPath = process.env.HTTPS_KEY_PATH;
   const certPath = process.env.HTTPS_CERT_PATH;
 

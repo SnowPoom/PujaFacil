@@ -46,7 +46,6 @@ const GUEST_NAV: { href: string; label: string }[] = [
 const AUTH_NAV: { href: string; label: string }[] = [
   { href: "/panel", label: "Panel" },
   { href: "/chat", label: "Chat" },
-  { href: "/notificaciones", label: "Notificaciones" },
   { href: "/perfil", label: "Mi perfil" },
 ];
 
@@ -148,7 +147,7 @@ export default function Header() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [pathname]);
 
   /* ---- Logout ---- */
   const handleLogout = useCallback(async () => {

@@ -16,7 +16,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # Servicio web para demo/producción local (descomentar cuando Dockerfile esté listo — Domingo 15)
+  # Servidor único Next.js + Socket.IO para demo/producción local.
   web:
     build: .
     container_name: pujafacil_web
@@ -26,11 +26,14 @@ services:
       DATABASE_URL: postgresql://pujafacil:pujafacil_dev@db:5432/pujafacil?schema=public
       NODE_ENV: production
       PORT: 3000
-      SESSION_COOKIE_NAME: pf_session
+      SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-pf_session}
       ENCRYPTION_KEY_HEX: ${ENCRYPTION_KEY_HEX}
+    volumes:
+      - pujafacil_private:/app/storage/private
     depends_on:
       db:
         condition: service_healthy
 
 volumes:
   pujafacil_pgdata:
+  pujafacil_private:
