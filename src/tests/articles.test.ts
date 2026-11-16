@@ -62,6 +62,7 @@ import {
   DELETE as deleteArticleByIdRoute,
 } from "@/app/api/articles/[id]/route";
 import { POST as submitArticleRoute } from "@/app/api/articles/[id]/submit/route";
+import { GET as getPublicArticlesRoute } from "@/app/api/public/articles/route";
 
 // ─── Helpers y Fixtures para Pruebas ────────────────────────────────
 const VALID_INPUT: ArticleInput = {
@@ -754,5 +755,108 @@ describe("5. Protección de endpoints API (/api/articles)", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json).toEqual({ ok: true, data: { deleted: true, id: "art-1" } });
+  });
+});
+
+describe("Catálogo público (/api/public/articles) e integración de archivos", () => {
+  const publicArticle = {
+    id: "public-art-1",
+    ownerId: "internal-owner-id",
+    title: "Reloj antiguo",
+    description: "Reloj mecánico de bolsillo en buen estado.",
+    category: "Relojería",
+    condition: "Muy bueno",
+    provenance: "Colección privada documentada desde 1950.",
+    initialPrice: new Prisma.Decimal("125.50"),
+    status: "APROBADO" as const,
+    createdAt: new Date("2026-11-15T10:00:00.000Z"),
+    owner: {
+      nombreCompleto: "Nombre Interno",
+      email: "privado@example.test",
+      cedulaCifrada: "identidad-cifrada",
+    },
+    files: [{ id: "photo-1", kind: "FOTO", storagePath: "C:/private/files/photo.jpg" }],
+    auctions: [{
+      id: "auction-1",
+      status: "PROGRAMADA" as const,
+      startingPrice: new Prisma.Decimal("125.50"),
+      closesAt: new Date("2026-12-01T10:00:00.000Z"),
+    }],
+  };
+
+  it("filtra findMany y count a los dos estados públicos permitidos", async () => {
+    db.article.findMany.mockResolvedValue([publicArticle]);
+    db.article.count.mockResolvedValue(1);
+
+    const response = await getPublicArticlesRoute(
+      makeApiRequest("GET", "http://localhost:3000/api/public/articles"),
+    );
+
+    expect(response.status).toBe(200);
+    const expectedWhere = { status: { in: ["APROBADO", "ASOCIADO_SUBASTA"] } };
+    expect(db.article.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expectedWhere }));
+    expect(db.article.count).toHaveBeenCalledWith({ where: expectedWhere });
+  });
+
+  it("aplica búsqueda, categoría y paginación, y devuelve el contrato paginado", async () => {
+    db.article.findMany.mockResolvedValue([publicArticle]);
+    db.article.count.mockResolvedValue(17);
+
+    const response = await getPublicArticlesRoute(makeApiRequest(
+      "GET",
+      "http://localhost:3000/api/public/articles?q=Reloj&category=Relojer%C3%ADa&page=2&pageSize=8",
+    ));
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(db.article.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        status: { in: ["APROBADO", "ASOCIADO_SUBASTA"] },
+        OR: [
+          { title: { contains: "Reloj", mode: "insensitive" } },
+          { description: { contains: "Reloj", mode: "insensitive" } },
+        ],
+        category: { equals: "Relojería", mode: "insensitive" },
+      },
+      skip: 8,
+      take: 8,
+    }));
+    expect(db.article.count).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ category: { equals: "Relojería", mode: "insensitive" } }),
+    }));
+    expect(json).toMatchObject({
+      ok: true,
+      data: { items: [{ id: "public-art-1" }], page: 2, pageSize: 8, total: 17, pages: 3 },
+    });
+  });
+
+  it("no serializa campos privados del propietario ni rutas de almacenamiento", async () => {
+    db.article.findMany.mockResolvedValue([publicArticle]);
+    db.article.count.mockResolvedValue(1);
+
+    const response = await getPublicArticlesRoute(
+      makeApiRequest("GET", "http://localhost:3000/api/public/articles"),
+    );
+    const serialized = JSON.stringify(await response.json());
+
+    expect(serialized).not.toContain("ownerId");
+    expect(serialized).not.toContain("email");
+    expect(serialized).not.toContain("cedulaCifrada");
+    expect(serialized).not.toContain("nombreCompleto");
+    expect(serialized).not.toContain("storagePath");
+    expect(serialized).not.toContain("C:/private/files");
+  });
+
+  it("rechaza parámetros de paginación inválidos con VALIDATION_ERROR", async () => {
+    const response = await getPublicArticlesRoute(
+      makeApiRequest("GET", "http://localhost:3000/api/public/articles?page=-1"),
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(json).toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION_ERROR", message: expect.any(String) },
+    });
   });
 });

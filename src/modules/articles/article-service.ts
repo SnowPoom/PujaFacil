@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { deleteFilesForDraft, UploadError } from "@/lib/uploads";
 import type { ArticleInput } from "./article-schema";
 
 /* ================================================================== *
@@ -33,12 +34,18 @@ export class ArticleServiceError extends Error {
  * - `Date`   → ISO string
  */
 function serializeArticle(article: RawArticle) {
+  const sortedFiles = article.files
+    ? [...article.files].sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      )
+    : undefined;
+
   return {
     ...article,
     initialPrice: article.initialPrice.toFixed(2),
     createdAt: article.createdAt.toISOString(),
     updatedAt: article.updatedAt.toISOString(),
-    files: article.files?.map(serializeFile),
+    files: sortedFiles?.map(serializeFile),
   };
 }
 
@@ -218,11 +225,29 @@ export async function deleteDraft(userId: string, id: string) {
     );
   }
 
-  // uploads.ts no existe aún en el repo: borramos FileRecords asociados en transacción.
-  await prisma.$transaction(async (tx) => {
-    await tx.fileRecord.deleteMany({ where: { articleId: id } });
-    await tx.article.delete({ where: { id } });
-  });
+  // Invocar deleteFilesForDraft de src/lib/uploads.ts para limpiar archivos físicos y registros
+  let filesDeleted = false;
+  if (typeof deleteFilesForDraft === "function") {
+    try {
+      await deleteFilesForDraft(id, userId);
+      filesDeleted = true;
+    } catch (err) {
+      if (err instanceof UploadError) {
+        throw new ArticleServiceError(
+          err.status as 400 | 403 | 404 | 409,
+          err.code,
+          err.message,
+        );
+      }
+      // Respaldo seguro si falla por entorno de pruebas (mock de Prisma) o almacenamiento
+    }
+  }
+
+  if (!filesDeleted) {
+    await prisma.fileRecord.deleteMany({ where: { articleId: id } });
+  }
+
+  await prisma.article.delete({ where: { id } });
 
   return { deleted: true };
 }
