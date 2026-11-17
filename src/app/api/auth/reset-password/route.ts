@@ -4,6 +4,8 @@ import { assertTrustedOrigin } from "@/lib/auth/guards";
 import { authErrorResponse, readJson } from "@/lib/auth/http";
 import { resetSchema } from "@/lib/auth/schemas";
 import { hashToken, sessionCookie } from "@/lib/auth/session";
+import { getSocketServer } from "@/lib/realtime";
+import { disconnectSocketSessions } from "@/lib/auth/socket-session";
 
 class InvalidReset extends Error {}
 export async function POST(request: Request): Promise<Response> {
@@ -23,6 +25,7 @@ export async function POST(request: Request): Promise<Response> {
       await tx.session.deleteMany({ where: { userId: reset.userId } });
       await tx.passwordReset.updateMany({ where: { userId: reset.userId, usedAt: null }, data: { usedAt: now } });
     });
+    disconnectSocketSessions(getSocketServer(), { userId: reset.userId });
     return Response.json({ ok: true, data: { message: "Contraseña actualizada. Inicia sesión con tu nueva contraseña." } },
       { headers: { "Cache-Control": "no-store", "Set-Cookie": sessionCookie("", new Date(0)) } });
   } catch (error) {

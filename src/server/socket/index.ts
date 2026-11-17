@@ -1,11 +1,12 @@
 import type { AccountStatus, Role } from "@prisma/client";
 import type { Server, Socket } from "socket.io";
 import { ZodError } from "zod";
-import { getUserFromCookieHeader } from "@/lib/auth/session";
+import { getSessionFromCookieHeader } from "@/lib/auth/session";
+import { armSocketSessionExpiry, bindSocketSession, emitAuthorizedRoom, SocketSessionError, withSocketSession } from "@/lib/auth/socket-session";
 import { setSocketServer } from "@/lib/realtime";
 import { activateDueAuctions, closeDueAuctions } from "@/modules/bids/auction-closer";
 import { chatJoinSchema, chatSendSchema, type ChatMessageDto } from "@/modules/chat/chat-rules";
-import { assertCanChat, ChatError, saveMessage, validateRoomAccess } from "@/modules/chat/chat-service";
+import { ChatError, saveMessage, validateRoomAccess } from "@/modules/chat/chat-service";
 
 export const AUCTION_SCHEDULER_INTERVAL_MS = 10_000;
 
@@ -42,7 +43,7 @@ function replyAck<T>(ack: unknown, payload: T): void {
 
 /**
  * Middleware de handshake de Socket.IO:
- * - Lee `socket.handshake.headers.cookie` con `getUserFromCookieHeader`.
+ * - Lee `pf_session` con el mismo resolver de sesiones usado por HTTP.
  * - Exige sesión válida y usuario no suspendido ni cerrado.
  * - Guarda `{ userId, roles, status }` en `socket.data` solo en memoria del servidor.
  * - Si no está autorizado, llama a `next(new Error("UNAUTHORIZED"))`.
@@ -53,11 +54,15 @@ export async function authenticateSocketHandshake(
 ): Promise<void> {
   try {
     const cookieHeader = socket.handshake.headers?.cookie;
-    const user = await getUserFromCookieHeader(cookieHeader);
-    if (!user) {
+    const session = await getSessionFromCookieHeader(cookieHeader);
+    if (!session) {
       next(new Error("UNAUTHORIZED"));
       return;
     }
+    const { user } = session;
+    bindSocketSession(socket, { tokenHash: session.tokenHash, userId: user.id, expiresAt: session.expiresAt });
+    // La credencial original ya no es necesaria después del handshake.
+    delete socket.handshake.headers.cookie;
     const socketData: SocketUserData = {
       userId: user.id,
       roles: user.roles,
@@ -76,6 +81,7 @@ export type RevalidateSocketResult =
 
 /**
  * Revalida en PostgreSQL antes de cada evento sensible (`chat:join`, `chat:send`):
+ * - Comprueba la sesión original de la conexión, su vigencia y revocación.
  * - Comprueba que la cuenta siga `ACTIVA` y conserve roles válidos.
  * - Si el acceso fue revocado (suspendida/cerrada/sin usuario), desconecta el socket.
  */
@@ -92,11 +98,12 @@ export async function revalidateSocketAccount(
     };
   }
   try {
-    const account = await assertCanChat(userId);
-    socket.data = { userId, roles: account.roles, status: account.status } satisfies SocketUserData;
-    return { ok: true, userId, roles: account.roles, status: account.status };
+    return await withSocketSession(socket, (_tx, account) => {
+      socket.data = { userId: account.userId, roles: account.roles, status: account.status } satisfies SocketUserData;
+      return { ok: true as const, userId: account.userId, roles: account.roles, status: account.status };
+    });
   } catch (err) {
-    if (err instanceof ChatError) {
+    if (err instanceof SocketSessionError) {
       if (err.revoked) {
         socket.disconnect(true);
       }
@@ -106,10 +113,11 @@ export async function revalidateSocketAccount(
         disconnected: err.revoked,
       };
     }
+    socket.disconnect(true);
     return {
       ok: false,
       error: { status: 403, code: "ERROR_AUTORIZACION", message: "No se pudo verificar tu cuenta." },
-      disconnected: false,
+      disconnected: true,
     };
   }
 }
@@ -143,12 +151,12 @@ export async function emitRoomPresence(
   excludeSocketId?: string,
 ): Promise<number> {
   const count = await countDistinctRoomUsers(io, room, excludeSocketId);
-  io.to(room).emit("chat:presence", { room, count });
+  await emitAuthorizedRoom(io, room, "chat:presence", { room, count });
   return count;
 }
 
 function mapErrorToSocketAckError(err: unknown): SocketAckError {
-  if (err instanceof ChatError) {
+  if (err instanceof ChatError || err instanceof SocketSessionError) {
     return { status: err.status, code: err.code, message: err.message };
   }
   if (err instanceof ZodError) {
@@ -179,7 +187,11 @@ export async function handleChatJoin(
 
   try {
     const input = chatJoinSchema.parse(payload);
-    const parsed = await validateRoomAccess(input.room, "read");
+    const parsed = await withSocketSession(socket, async (tx) => {
+      const room = await validateRoomAccess(input.room, "read", tx);
+      await socket.join(room.room);
+      return room;
+    });
 
     // Si estaba en otra sala de chat distinta, salir de ella y actualizar su presencia.
     const previousChatRooms = [...socket.rooms].filter(
@@ -190,10 +202,10 @@ export async function handleChatJoin(
       await emitRoomPresence(io, prevRoom);
     }
 
-    await socket.join(parsed.room);
     const count = await emitRoomPresence(io, parsed.room);
-    replyAck(ack, { ok: true, room: parsed.room, count });
+    await withSocketSession(socket, () => replyAck(ack, { ok: true, room: parsed.room, count }));
   } catch (err) {
+    if (err instanceof SocketSessionError && err.revoked) socket.disconnect(true);
     replyAck(ack, { ok: false, error: mapErrorToSocketAckError(err) });
   }
 }
@@ -225,15 +237,15 @@ export async function handleChatSend(
     }
 
     // Persiste en PostgreSQL ANTES de emitir chat:new (con alias seguro, sin email/nombre/userId).
-    const message = await saveMessage({
-      room: input.room,
-      authorId: revalidated.userId,
-      text: input.text,
+    const message = await withSocketSession(socket, async (tx, account) => {
+      if (!socket.rooms.has(input.room)) throw new ChatError(403, "NO_UNIDO_A_SALA", "Debes unirte a la sala antes de enviar mensajes.");
+      return saveMessage({ room: input.room, authorId: account.userId, text: input.text }, tx);
     });
 
-    io.to(message.room).emit("chat:new", message);
-    replyAck(ack, { ok: true, clientMessageId: input.clientMessageId, message });
+    await emitAuthorizedRoom(io, message.room, "chat:new", message);
+    await withSocketSession(socket, () => replyAck(ack, { ok: true, clientMessageId: input.clientMessageId, message }));
   } catch (err) {
+    if (err instanceof SocketSessionError && err.revoked) socket.disconnect(true);
     replyAck(ack, { ok: false, error: mapErrorToSocketAckError(err) });
   }
 }
@@ -294,6 +306,7 @@ export function registerSocketHandlers(io: Server): void {
       socket.disconnect(true);
       return;
     }
+    armSocketSessionExpiry(socket);
 
     // Sala privada del usuario en el servidor (el cliente no puede unirse a la de otro usuario).
     void socket.join(`user:${data.userId}`);

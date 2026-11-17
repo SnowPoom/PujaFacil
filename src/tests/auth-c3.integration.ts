@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import bcrypt from "bcryptjs";
+import { Prisma } from "@prisma/client";
 import { io, type Socket } from "socket.io-client";
 import { prisma } from "@/lib/prisma";
 import { encryptCedula } from "@/lib/auth/crypto";
@@ -120,7 +121,9 @@ async function main() {
     await prisma.user.update({ where: { id: pending.id }, data: { status: "ACTIVA" } });
     assert.equal((await join(socket)).ok, true);
     assert.equal((await join(other)).ok, true);
-    const text = `Mensaje ficticio C3 ${randomUUID()}`;
+    // Un UUID con muchos dígitos puede activar legítimamente el filtro de teléfono.
+    // El marcador sigue siendo único sin parecer un dato personal.
+    const text = `Mensaje ficticio C3 ${randomUUID().replace(/\d/g, "x")}`;
     const received = new Promise<ChatMessageDto>((resolve, reject) => {
       const timer = setTimeout(() => { other.off("chat:new", onMessage); reject(new Error("Falta difusión entre clientes.")); }, 10_000);
       function onMessage(message: ChatMessageDto) {
@@ -169,17 +172,22 @@ async function main() {
     try {
       const users = await prisma.user.findMany({ where: { email: { in: emails } }, select: { id: true } });
       const ids = users.map(({ id }) => id);
-      await prisma.$transaction([
-        prisma.chatMessage.deleteMany({ where: { authorId: { in: ids } } }),
-        prisma.auditEvent.deleteMany({ where: { actorId: { in: ids } } }),
-        prisma.session.deleteMany({ where: { userId: { in: ids } } }),
-        prisma.userRole.deleteMany({ where: { userId: { in: ids } } }),
-        prisma.user.deleteMany({ where: { id: { in: ids } } }),
-      ]);
+      await prisma.$transaction(async (tx) => {
+        // Mismo orden que el guard de sockets y reset, también durante teardown.
+        if (ids.length) await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" IN (${Prisma.join(ids)}) ORDER BY "id" FOR UPDATE`;
+        await tx.chatMessage.deleteMany({ where: { authorId: { in: ids } } });
+        await tx.auditEvent.deleteMany({ where: { actorId: { in: ids } } });
+        await tx.session.deleteMany({ where: { userId: { in: ids } } });
+        await tx.userRole.deleteMany({ where: { userId: { in: ids } } });
+        await tx.user.deleteMany({ where: { id: { in: ids } } });
+      });
       assert.equal(await prisma.user.count({ where: { email: { in: emails } } }), 0);
       assert.equal(await prisma.chatMessage.count({ where: { authorId: { in: ids } } }), 0);
       console.log("PASS C3: limpieza de cuentas, mensajes, sesiones, roles y auditoría propios.");
     } finally { await prisma.$disconnect(); }
   }
 }
-main().catch(() => { console.error(`FAIL C3 en ${phase}. No se imprimen credenciales.`); process.exitCode = 1; });
+main().catch((error: unknown) => {
+  const location = error instanceof Error ? error.stack?.split("\n").find((line) => line.trim().startsWith("at ") && line.includes("auth-c3.integration.ts:")) : undefined;
+  console.error(`FAIL C3 en ${phase}.${location ?? ""} No se imprimen credenciales.`); process.exitCode = 1;
+});

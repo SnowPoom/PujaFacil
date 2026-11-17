@@ -3,6 +3,8 @@ import { parseCookie, stringifySetCookie } from "cookie";
 import type { AccountStatus, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { hasValidRoles } from "@/lib/auth/roles";
+import { getSocketServer } from "@/lib/realtime";
+import { disconnectSocketSessions } from "@/lib/auth/socket-session";
 
 export type SessionUser = { id: string; nombreCompleto: string; email: string; status: AccountStatus; roles: Role[] };
 export const SESSION_COOKIE_NAME = "pf_session";
@@ -18,6 +20,9 @@ export function readSessionToken(cookieHeader?: string): string | undefined {
   return rawToken && /^[a-f\d]{64}$/.test(rawToken) ? rawToken : undefined;
 }
 export async function getUserFromCookieHeader(cookieHeader?: string): Promise<SessionUser | null> {
+  return (await getSessionFromCookieHeader(cookieHeader))?.user ?? null;
+}
+export async function getSessionFromCookieHeader(cookieHeader?: string): Promise<{ user: SessionUser; tokenHash: string; expiresAt: Date } | null> {
   const token = readSessionToken(cookieHeader);
   if (!token) return null;
   const session = await prisma.session.findUnique({
@@ -29,7 +34,7 @@ export async function getUserFromCookieHeader(cookieHeader?: string): Promise<Se
   if (user.status === "SUSPENDIDA" || user.status === "CERRADA") return null;
   const roles = user.roles.map(({ role }) => role);
   if (!hasValidRoles(roles)) return null;
-  return { ...user, roles };
+  return { user: { ...user, roles }, tokenHash: hashToken(token), expiresAt: session.expiresAt };
 }
 export async function createUserSession(userId: string): Promise<{ rawToken: string; expiresAt: Date }> {
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { roles: { select: { role: true } } } });
@@ -42,7 +47,9 @@ export async function createUserSession(userId: string): Promise<{ rawToken: str
   return { rawToken, expiresAt };
 }
 export async function deleteSessionFromRawToken(rawToken: string): Promise<void> {
-  await prisma.session.deleteMany({ where: { tokenHash: hashToken(rawToken) } });
+  const tokenHash = hashToken(rawToken);
+  await prisma.session.deleteMany({ where: { tokenHash } });
+  disconnectSocketSessions(getSocketServer(), { tokenHash });
 }
 export function sessionCookie(rawToken: string, expiresAt: Date): string {
   return stringifySetCookie({ name: SESSION_COOKIE_NAME, value: rawToken, httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", expires: expiresAt });

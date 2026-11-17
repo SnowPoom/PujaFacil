@@ -39,11 +39,11 @@ export async function assertCanChat(userId: string): Promise<ChatAccount> {
 }
 
 /** La sala debe tener formato válido y, si es de subasta, existir y ser visible. */
-export async function validateRoomAccess(room: unknown, mode: "read" | "write" = "read"): Promise<ParsedRoom> {
+export async function validateRoomAccess(room: unknown, mode: "read" | "write" = "read", db: Prisma.TransactionClient = prisma): Promise<ParsedRoom> {
   const parsed = parseRoom(room);
   if (!parsed) throw new ChatError(400, "SALA_INVALIDA", "La sala indicada no es válida.");
   if (parsed.kind === "general") return parsed;
-  const auction = await prisma.auction.findUnique({ where: { id: parsed.auctionId }, select: { status: true } });
+  const auction = await db.auction.findUnique({ where: { id: parsed.auctionId }, select: { status: true } });
   if (!auction || !READABLE_AUCTION_STATUS.includes(auction.status)) {
     throw new ChatError(404, "SALA_NO_DISPONIBLE", "No tienes acceso a esta sala o no existe.");
   }
@@ -62,18 +62,26 @@ function isUniqueViolation(error: unknown): boolean {
 }
 
 /** Seudónimo por usuario y subasta, generado por el servidor y único dentro de la subasta. */
-export async function getOrCreateAuctionAlias(auctionId: string, userId: string): Promise<string> {
+export async function getOrCreateAuctionAlias(auctionId: string, userId: string, db: Prisma.TransactionClient = prisma): Promise<string> {
   const where = { auctionId_userId: { auctionId, userId } };
-  const existing = await prisma.auctionAlias.findUnique({ where, select: { alias: true } });
+  const existing = await db.auctionAlias.findUnique({ where, select: { alias: true } });
   if (existing) return existing.alias;
   for (let attempt = 0; attempt < 5; attempt += 1) {
+    // En una transacción una colisión única abortaría también el guard de sesión.
+    // El savepoint conserva el reintento existente sin abrir otra conexión.
+    if (db !== prisma) await db.$executeRaw`SAVEPOINT chat_alias_attempt`;
     try {
-      const created = await prisma.auctionAlias.create({ data: { auctionId, userId, alias: generateAuctionAlias() }, select: { alias: true } });
+      const created = await db.auctionAlias.create({ data: { auctionId, userId, alias: generateAuctionAlias() }, select: { alias: true } });
+      if (db !== prisma) await db.$executeRaw`RELEASE SAVEPOINT chat_alias_attempt`;
       return created.alias;
     } catch (error) {
+      if (db !== prisma) {
+        await db.$executeRaw`ROLLBACK TO SAVEPOINT chat_alias_attempt`;
+        await db.$executeRaw`RELEASE SAVEPOINT chat_alias_attempt`;
+      }
       if (!isUniqueViolation(error)) throw error;
       // Otra petición del mismo usuario pudo crearlo a la vez; si no, el alias chocó y se reintenta.
-      const raced = await prisma.auctionAlias.findUnique({ where, select: { alias: true } });
+      const raced = await db.auctionAlias.findUnique({ where, select: { alias: true } });
       if (raced) return raced.alias;
     }
   }
@@ -81,14 +89,14 @@ export async function getOrCreateAuctionAlias(auctionId: string, userId: string)
 }
 
 /** Persiste el mensaje en PostgreSQL y devuelve el payload público (sin authorId). */
-export async function saveMessage(input: { room: unknown; authorId: string; text: string }): Promise<ChatMessageDto> {
-  const parsed = await validateRoomAccess(input.room, "write");
+export async function saveMessage(input: { room: unknown; authorId: string; text: string }, db: Prisma.TransactionClient = prisma): Promise<ChatMessageDto> {
+  const parsed = await validateRoomAccess(input.room, "write", db);
   const text = sanitizeChatText(input.text);
   if (!text) throw new ChatError(400, "MENSAJE_VACIO", "El mensaje no contiene texto permitido.");
   if (text.length > MAX_CHAT_TEXT) throw new ChatError(400, "MENSAJE_LARGO", `El mensaje admite como máximo ${MAX_CHAT_TEXT} caracteres.`);
   const auctionId = parsed.kind === "auction" ? parsed.auctionId : null;
-  const authorAlias = auctionId ? await getOrCreateAuctionAlias(auctionId, input.authorId) : GENERAL_ALIAS;
-  const message = await prisma.chatMessage.create({
+  const authorAlias = auctionId ? await getOrCreateAuctionAlias(auctionId, input.authorId, db) : GENERAL_ALIAS;
+  const message = await db.chatMessage.create({
     data: { room: parsed.room, authorId: input.authorId, auctionId, text },
     select: { id: true, room: true, text: true, createdAt: true },
   });

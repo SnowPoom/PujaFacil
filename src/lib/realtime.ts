@@ -1,5 +1,6 @@
 import type { AuctionStatus } from "@prisma/client";
 import type { Server } from "socket.io";
+import { emitAuthorizedRoom } from "@/lib/auth/socket-session";
 
 // Instancia de Socket.IO compartida en el mismo proceso Node de `server.ts`.
 // Nunca usar `window`: solo `globalThis` en el servidor.
@@ -35,13 +36,13 @@ export function getSocketServer(): Server | undefined {
 export function emitAuctionUpdated(auctionId: string, payload: AuctionUpdatedPayload): boolean {
   const io = globalThis.__pfSocketIo;
   if (!io) return false;
-  io.to(`auction:${auctionId}`).emit("auction:updated", payload);
+  void emitAuthorizedRoom(io, `auction:${auctionId}`, "auction:updated", payload).catch(() => {});
   return true;
 }
 
 export function emitNotificationToUser(userId: string, payload: NotificationRealtimePayload): boolean {
   const io = globalThis.__pfSocketIo;
   if (!io) return false;
-  io.to(`user:${userId}`).emit("notification:new", payload);
+  void emitAuthorizedRoom(io, `user:${userId}`, "notification:new", payload).catch(() => {});
   return true;
 }
