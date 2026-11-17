@@ -79,6 +79,7 @@ describe("Entrega protegida — errores visibles sin exponer datos", () => {
     db.$transaction.mockImplementationOnce(async (work) => { await slow; return work(db); });
     const socket = recipient("validacion-lenta"), independent = recipient("validacion-rapida");
     const io = server(socket, independent);
+    // Se verifica el orden de estas invocaciones, no un orden global de commits.
     const first = emitAuthorizedRoom(io, "general", "auction:updated", { highestBid: "100.00" });
     const second = emitAuthorizedRoom(io, "general", "auction:updated", { highestBid: "110.00" });
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -104,6 +105,19 @@ describe("Entrega protegida — errores visibles sin exponer datos", () => {
     ]);
     expect(socket.emit).not.toHaveBeenCalled();
     expect(console.error).not.toHaveBeenCalled();
+  });
+  it("una emisión rechazada no bloquea la siguiente en la misma conexión válida", async () => {
+    const socket = recipient("fallo-controlado-de-sala");
+    // La primera enumeración funciona; la comprobación dentro de su tarea falla.
+    // El rechazo debe llegar a su llamador, sin contaminar la siguiente tarea.
+    vi.spyOn(socket.rooms, "has").mockReturnValueOnce(true).mockImplementationOnce(() => { throw new Error("Fallo ficticio de sala"); });
+    const io = server(socket);
+    const first = emitAuthorizedRoom(io, "general", "chat:new", { text: "Primero" });
+    const next = emitAuthorizedRoom(io, "general", "chat:new", { text: "Segundo" });
+    await expect(first).rejects.toThrow("Fallo ficticio de sala");
+    await expect(next).resolves.toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(socket.emit).toHaveBeenCalledExactlyOnceWith("chat:new", { text: "Segundo" });
+    expect(socket.disconnect).not.toHaveBeenCalled();
   });
   it("el emisor conserva true=programado y registra los rechazos asíncronos inesperados", async () => {
     setSocketServer({} as never); // Fallo fuera de la comprobación individual.

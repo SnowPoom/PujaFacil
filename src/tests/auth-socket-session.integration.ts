@@ -256,10 +256,11 @@ async function concurrentDelivery() {
     clients.push(await connect(await credential(user.email)));
   }
   const marker = `Rafaga ficticia ${randomUUID().replace(/\d/g, "x")} `;
-  const received = clients.map(() => new Set<string>());
+  // Conservar todas las recepciones: un Set ocultaría los duplicados.
+  const received = clients.map(() => [] as string[]);
   for (const [index, socket] of clients.entries()) {
     socket.on("chat:new", (message: { id: string; text: string }) => {
-      if (message.text.startsWith(marker)) received[index].add(message.id);
+      if (message.text.startsWith(marker)) received[index].push(message.id);
     });
   }
   const started = performance.now();
@@ -268,13 +269,28 @@ async function concurrentDelivery() {
       room: "general", text: `${marker}${index}`, clientMessageId: randomUUID(),
     })));
   assert.ok(results.every((result) => result.ok), "Una operación autorizada falló en la ráfaga.");
-  for (let attempt = 0; attempt < 250 && received.some((messages) => messages.size !== 12); attempt++) await delay(20);
-  assert.ok(received.every((messages) => messages.size === 12), "Se perdió una entrega a un cliente autorizado.");
+  const expectedIds = results.map((result) => {
+    if (!result.ok) throw new Error("Falta la confirmación de un mensaje de la ráfaga.");
+    return result.message.id;
+  }).sort();
+  assert.equal(new Set(expectedIds).size, 12, "Cada envío original debe confirmar un mensaje distinto.");
+  for (let attempt = 0; attempt < 250 && received.some((messages) => messages.length < 12); attempt++) await delay(20);
+  // Ventana negativa acotada para observar también duplicados posteriores al ACK.
+  await delay(200);
+  const persisted = await prisma.chatMessage.findMany({ where: { text: { startsWith: marker } }, select: { id: true, text: true } });
+  assert.equal(persisted.length, 12);
+  assert.deepEqual(persisted.map(({ id }) => id).sort(), expectedIds);
+  assert.deepEqual(persisted.map(({ text }) => text).sort(), Array.from({ length: 12 }, (_, index) => `${marker}${index}`).sort());
+  // Comprobar identidad y frecuencia, sin imponer un orden global a envíos concurrentes.
+  // Después de este punto no hay awaits antes de desconectar los ocho clientes.
+  for (const messages of received) {
+    assert.equal(messages.length, 12, "Faltan entregas o existen duplicados para un cliente.");
+    assert.deepEqual([...messages].sort(), expectedIds, "Cada ID confirmado debe recibirse exactamente una vez por cliente.");
+  }
   assert.ok(clients.every((socket) => socket.connected), "Una conexión válida se desconectó durante la ráfaga.");
-  assert.equal(await prisma.chatMessage.count({ where: { text: { startsWith: marker } } }), 12);
   const elapsed = Math.round(performance.now() - started);
   for (const socket of clients) socket.disconnect();
-  console.log(`PASS ráfaga real: 12 mensajes concurrentes, 8 clientes, 96 entregas comprobadas, sin pérdida ni desconexión (${elapsed} ms).`);
+  console.log(`PASS ráfaga real: 12 mensajes originales persistidos, 8 clientes conectados, 96 entregas comprobadas exactamente una vez por ID y cliente, sin pérdida ni duplicados en la ventana probada (${elapsed} ms).`);
 }
 async function main() {
   try {
