@@ -15,6 +15,20 @@ const db = vi.hoisted(() => ({
 }));
 
 vi.mock("../lib/prisma", () => ({ prisma: db }));
+// Estas pruebas de negocio aíslan el transporte. La autorización de destinatarios
+// se verifica por separado con PostgreSQL y sockets reales en la integración.
+vi.mock("../lib/auth/socket-session", async (original) => ({
+  ...await original<typeof import("../lib/auth/socket-session")>(),
+  emitAuthorizedRoom: vi.fn(async (io, room, event, payload) => { io.to(room).emit(event, payload); }),
+}));
+import { bindSocketSession } from "../lib/auth/socket-session";
+
+function sessionSocket<T extends { data: { userId: string } }>(socket: T): never {
+  const expiresAt = new Date(Date.now() + 60_000);
+  bindSocketSession(socket, { tokenHash: "a".repeat(64), userId: socket.data.userId, expiresAt });
+  db.session.findUnique.mockResolvedValue({ userId: socket.data.userId, expiresAt });
+  return socket as never;
+}
 
 import { chatSendSchema, historyQuerySchema, HIDDEN_DATA, parseRoom, sanitizeChatText } from "../modules/chat/chat-rules";
 import {
@@ -254,20 +268,20 @@ describe("Kevin 14/11 — Etapa 3: Handshake Socket.IO y revalidación", () => {
     const socket = { data: { userId: "u1", roles: ["COMPRADOR"], status: "ACTIVA" }, disconnect };
 
     // Caso 1: Sigue activa
-    db.user.findUnique.mockResolvedValueOnce({ status: "ACTIVA", roles: [{ role: "COMPRADOR" }, { role: "VENDEDOR" }] });
-    const okRes = await revalidateSocketAccount(socket as never);
+    db.user.findUnique.mockResolvedValue({ status: "ACTIVA", roles: [{ role: "COMPRADOR" }, { role: "VENDEDOR" }] });
+    const okRes = await revalidateSocketAccount(sessionSocket(socket));
     expect(okRes).toEqual({ ok: true, userId: "u1", roles: ["COMPRADOR", "VENDEDOR"], status: "ACTIVA" });
     expect(disconnect).not.toHaveBeenCalled();
 
     // Caso 2: Cuenta PENDIENTE -> devuelve 403 sin desconectar forzosamente
-    db.user.findUnique.mockResolvedValueOnce({ status: "PENDIENTE", roles: [{ role: "COMPRADOR" }] });
-    const pendingRes = await revalidateSocketAccount(socket as never);
+    db.user.findUnique.mockResolvedValue({ status: "PENDIENTE", roles: [{ role: "COMPRADOR" }] });
+    const pendingRes = await revalidateSocketAccount(sessionSocket(socket));
     expect(pendingRes).toMatchObject({ ok: false, error: { status: 403, code: "CUENTA_NO_ACTIVA" }, disconnected: false });
     expect(disconnect).not.toHaveBeenCalled();
 
     // Caso 3: Cuenta SUSPENDIDA -> devuelve 403 y desconecta el socket
-    db.user.findUnique.mockResolvedValueOnce({ status: "SUSPENDIDA", roles: [{ role: "COMPRADOR" }] });
-    const revokedRes = await revalidateSocketAccount(socket as never);
+    db.user.findUnique.mockResolvedValue({ status: "SUSPENDIDA", roles: [{ role: "COMPRADOR" }] });
+    const revokedRes = await revalidateSocketAccount(sessionSocket(socket));
     expect(revokedRes).toMatchObject({ ok: false, error: { status: 403, code: "ACCESO_REVOCADO" }, disconnected: true });
     expect(disconnect).toHaveBeenCalledWith(true);
   });
@@ -293,7 +307,7 @@ describe("Kevin 14/11 — Etapa 4: chat:join y presencia por usuarios distintos"
   });
 
   it("handleChatJoin une a sala general o subasta válida, emite chat:presence y responde ACK ok:true", async () => {
-    db.user.findUnique.mockResolvedValueOnce({ status: "ACTIVA", roles: [{ role: "COMPRADOR" }] });
+    db.user.findUnique.mockResolvedValue({ status: "ACTIVA", roles: [{ role: "COMPRADOR" }] });
     db.auction.findUnique.mockResolvedValueOnce({ status: "PROGRAMADA" });
 
     const emitFn = vi.fn();
@@ -318,7 +332,7 @@ describe("Kevin 14/11 — Etapa 4: chat:join y presencia por usuarios distintos"
     };
     const ack = vi.fn();
 
-    await handleChatJoin(io as never, socket as never, { room: "auction:demo-subasta-programada" }, ack);
+    await handleChatJoin(io as never, sessionSocket(socket), { room: "auction:demo-subasta-programada" }, ack);
 
     expect(join).toHaveBeenCalledWith("auction:demo-subasta-programada");
     expect(emitFn).toHaveBeenCalledWith("chat:presence", { room: "auction:demo-subasta-programada", count: 2 });
@@ -337,9 +351,9 @@ describe("Kevin 14/11 — Etapa 4: chat:join y presencia por usuarios distintos"
     };
 
     // Cuenta PENDIENTE
-    db.user.findUnique.mockResolvedValueOnce({ status: "PENDIENTE", roles: [{ role: "COMPRADOR" }] });
+    db.user.findUnique.mockResolvedValue({ status: "PENDIENTE", roles: [{ role: "COMPRADOR" }] });
     const ackPending = vi.fn();
-    await handleChatJoin({} as never, socket as never, { room: "general" }, ackPending);
+    await handleChatJoin({} as never, sessionSocket(socket), { room: "general" }, ackPending);
     expect(ackPending).toHaveBeenCalledWith({
       ok: false,
       error: expect.objectContaining({ status: 403, code: "CUENTA_NO_ACTIVA" }),
@@ -347,10 +361,10 @@ describe("Kevin 14/11 — Etapa 4: chat:join y presencia por usuarios distintos"
     expect(join).not.toHaveBeenCalled();
 
     // Subasta inexistente con cuenta ACTIVA
-    db.user.findUnique.mockResolvedValueOnce({ status: "ACTIVA", roles: [{ role: "COMPRADOR" }] });
+    db.user.findUnique.mockResolvedValue({ status: "ACTIVA", roles: [{ role: "COMPRADOR" }] });
     db.auction.findUnique.mockResolvedValueOnce(null);
     const ackNotFound = vi.fn();
-    await handleChatJoin({} as never, socket as never, { room: "auction:no-existe" }, ackNotFound);
+    await handleChatJoin({} as never, sessionSocket(socket), { room: "auction:no-existe" }, ackNotFound);
     expect(ackNotFound).toHaveBeenCalledWith({
       ok: false,
       error: expect.objectContaining({ status: 404, code: "SALA_NO_DISPONIBLE" }),
@@ -381,7 +395,7 @@ describe("Kevin 14/11 — Etapa 5: chat:send (persistencia antes de emitir y aut
     const callOrder: string[] = [];
     const now = new Date("2026-11-14T16:00:00.000Z");
 
-    db.user.findUnique.mockResolvedValueOnce({ status: "ACTIVA", roles: [{ role: "COMPRADOR" }] });
+    db.user.findUnique.mockResolvedValue({ status: "ACTIVA", roles: [{ role: "COMPRADOR" }] });
     db.auction.findUnique.mockResolvedValueOnce({ status: "ACTIVA" });
     db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Postor-cafe01" });
     db.chatMessage.create.mockImplementationOnce(async () => {
@@ -403,7 +417,7 @@ describe("Kevin 14/11 — Etapa 5: chat:send (persistencia antes de emitir y aut
 
     await handleChatSend(
       io as never,
-      socket as never,
+      sessionSocket(socket),
       { room: "auction:sub-activa", text: "<b>Hola</b> mi correo es a@b.com", clientMessageId: "cli-1" },
       ack,
     );
@@ -425,7 +439,7 @@ describe("Kevin 14/11 — Etapa 5: chat:send (persistencia antes de emitir y aut
     const io = { to: vi.fn().mockReturnValue({ emit: emitFn }) };
 
     // 1. Cuenta PENDIENTE
-    db.user.findUnique.mockResolvedValueOnce({ status: "PENDIENTE", roles: [{ role: "COMPRADOR" }] });
+    db.user.findUnique.mockResolvedValue({ status: "PENDIENTE", roles: [{ role: "COMPRADOR" }] });
     const socketPending = {
       id: "s-pend",
       data: { userId: "u-pend", roles: ["COMPRADOR"], status: "PENDIENTE" },
@@ -433,7 +447,7 @@ describe("Kevin 14/11 — Etapa 5: chat:send (persistencia antes de emitir y aut
       disconnect: vi.fn(),
     };
     const ackPending = vi.fn();
-    await handleChatSend(io as never, socketPending as never, { room: "general", text: "Hola", clientMessageId: "c1" }, ackPending);
+    await handleChatSend(io as never, sessionSocket(socketPending), { room: "general", text: "Hola", clientMessageId: "c1" }, ackPending);
     expect(ackPending).toHaveBeenCalledWith({
       ok: false,
       error: expect.objectContaining({ status: 403, code: "CUENTA_NO_ACTIVA" }),
@@ -442,7 +456,7 @@ describe("Kevin 14/11 — Etapa 5: chat:send (persistencia antes de emitir y aut
     expect(emitFn).not.toHaveBeenCalled();
 
     // 2. Cuenta ACTIVA pero no unida a la sala
-    db.user.findUnique.mockResolvedValueOnce({ status: "ACTIVA", roles: [{ role: "COMPRADOR" }] });
+    db.user.findUnique.mockResolvedValue({ status: "ACTIVA", roles: [{ role: "COMPRADOR" }] });
     const socketNotJoined = {
       id: "s-active",
       data: { userId: "u1", roles: ["COMPRADOR"], status: "ACTIVA" },
@@ -450,7 +464,7 @@ describe("Kevin 14/11 — Etapa 5: chat:send (persistencia antes de emitir y aut
       disconnect: vi.fn(),
     };
     const ackNotJoined = vi.fn();
-    await handleChatSend(io as never, socketNotJoined as never, { room: "general", text: "Hola", clientMessageId: "c2" }, ackNotJoined);
+    await handleChatSend(io as never, sessionSocket(socketNotJoined), { room: "general", text: "Hola", clientMessageId: "c2" }, ackNotJoined);
     expect(ackNotJoined).toHaveBeenCalledWith({
       ok: false,
       error: expect.objectContaining({ status: 403, code: "NO_UNIDO_A_SALA" }),
@@ -460,7 +474,7 @@ describe("Kevin 14/11 — Etapa 5: chat:send (persistencia antes de emitir y aut
   });
 
   it("handleChatSend rechaza payload inválido de Zod (400) sin escribir en base de datos", async () => {
-    db.user.findUnique.mockResolvedValueOnce({ status: "ACTIVA", roles: [{ role: "COMPRADOR" }] });
+    db.user.findUnique.mockResolvedValue({ status: "ACTIVA", roles: [{ role: "COMPRADOR" }] });
     const socket = {
       id: "s1",
       data: { userId: "u1", roles: ["COMPRADOR"], status: "ACTIVA" },
@@ -468,7 +482,7 @@ describe("Kevin 14/11 — Etapa 5: chat:send (persistencia antes de emitir y aut
       disconnect: vi.fn(),
     };
     const ack = vi.fn();
-    await handleChatSend({} as never, socket as never, { room: "general", text: "   ", clientMessageId: "" }, ack);
+    await handleChatSend({} as never, sessionSocket(socket), { room: "general", text: "   ", clientMessageId: "" }, ack);
     expect(ack).toHaveBeenCalledWith({
       ok: false,
       error: expect.objectContaining({ status: 400, code: "DATOS_INVALIDOS" }),
