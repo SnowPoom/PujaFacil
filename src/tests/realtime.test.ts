@@ -1672,3 +1672,223 @@ describe("Kevin 16/11 — Etapa 6: Planificador único cada 10 s en el servidor 
     }
   });
 });
+
+describe("Kevin 17/11 — Verificación final: 5 casos negativos obligatorios de API y concurrencia", () => {
+  const validToken = "a".repeat(64);
+  const ctx = { params: Promise.resolve({ id: "sub-17" }) };
+  const makeActiveAuctionRow = () => ({
+    id: "sub-17",
+    articleId: "art-17",
+    startingPrice: new Prisma.Decimal("150.00"),
+    minIncrement: new Prisma.Decimal("10.00"),
+    opensAt: new Date(Date.now() - 3_600_000),
+    closesAt: new Date(Date.now() + 3_600_000),
+    status: "ACTIVA" as const,
+  });
+
+  it("Caso negativo 1: Invitado sin sesión recibe 401 NO_AUTENTICADO en POST /api/auctions/[id]/bids", async () => {
+    const req = new Request("http://localhost:3000/api/auctions/sub-17/bids", {
+      method: "POST",
+      headers: {
+        origin: "http://localhost:3000",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ amount: "150.00", requestId: "req-guest-17" }),
+    });
+
+    const res = await postAuctionBidRoute(req, ctx);
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      ok: false,
+      error: { code: "NO_AUTENTICADO" },
+    });
+  });
+
+  it("Caso negativo 2: Usuario PENDIENTE recibe 403 CUENTA_NO_ACTIVA en POST /api/auctions/[id]/bids", async () => {
+    db.session.findUnique.mockResolvedValue({
+      expiresAt: new Date(Date.now() + 60_000),
+      user: {
+        id: "user-pendiente",
+        nombreCompleto: "Usuario Pendiente",
+        email: "pendiente@pujafacil.test",
+        status: "PENDIENTE",
+        roles: [{ role: "COMPRADOR" }],
+      },
+    });
+
+    const req = new Request("http://localhost:3000/api/auctions/sub-17/bids", {
+      method: "POST",
+      headers: {
+        origin: "http://localhost:3000",
+        cookie: `pf_session=${validToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ amount: "150.00", requestId: "req-pend-17" }),
+    });
+
+    const res = await postAuctionBidRoute(req, ctx);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      ok: false,
+      error: { code: "CUENTA_NO_ACTIVA" },
+    });
+  });
+
+  it("Caso negativo 3: Vendedor propietario del propio artículo recibe 403 OWN_ITEM en POST /api/auctions/[id]/bids", async () => {
+    db.session.findUnique.mockResolvedValue({
+      expiresAt: new Date(Date.now() + 60_000),
+      user: {
+        id: "vendedor-propietario",
+        nombreCompleto: "Vendedor Propietario",
+        email: "vendedor@pujafacil.test",
+        status: "ACTIVA",
+        roles: [{ role: "COMPRADOR" }, { role: "VENDEDOR" }],
+      },
+    });
+    db.user.findUnique.mockResolvedValueOnce({
+      status: "ACTIVA",
+      roles: [{ role: "COMPRADOR" }, { role: "VENDEDOR" }],
+    });
+    db.$queryRaw.mockResolvedValueOnce([makeActiveAuctionRow()]);
+    db.article.findUnique.mockResolvedValueOnce({
+      ownerId: "vendedor-propietario",
+      title: "Reloj del Vendedor",
+    });
+
+    const req = new Request("http://localhost:3000/api/auctions/sub-17/bids", {
+      method: "POST",
+      headers: {
+        origin: "http://localhost:3000",
+        cookie: `pf_session=${validToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ amount: "150.00", requestId: "req-own-17" }),
+    });
+
+    const res = await postAuctionBidRoute(req, ctx);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      ok: false,
+      error: { code: "OWN_ITEM" },
+    });
+  });
+
+  it("Caso negativo 4: 2 pujas simultáneas al mismo mínimo en POST /api/auctions/[id]/bids -> solo 1 aceptada (201) y la otra rechazada (409 BID_TOO_LOW)", async () => {
+    let highestInDb: { id: string; amount: Prisma.Decimal; buyerId: string } | null = null;
+    const tokenBuyer1 = "1".repeat(64);
+    const tokenBuyer2 = "2".repeat(64);
+
+    db.session.findUnique.mockImplementation(async ({ where }: { where: { tokenHash: string } }) => {
+      const isFirst = where.tokenHash.startsWith("6b") || !highestInDb;
+      return {
+        expiresAt: new Date(Date.now() + 60_000),
+        user: {
+          id: isFirst ? "buyer-1" : "buyer-2",
+          nombreCompleto: isFirst ? "Comprador 1" : "Comprador 2",
+          email: isFirst ? "c1@pujafacil.test" : "c2@pujafacil.test",
+          status: "ACTIVA" as const,
+          roles: [{ role: "COMPRADOR" as const }],
+        },
+      };
+    });
+    db.user.findUnique.mockResolvedValue({
+      status: "ACTIVA",
+      roles: [{ role: "COMPRADOR" }],
+    });
+    db.$queryRaw.mockResolvedValue([makeActiveAuctionRow()]);
+    db.article.findUnique.mockResolvedValue({ ownerId: "vendedor-ajeno", title: "Lote Disputado" });
+    db.bid.findUnique.mockResolvedValue(null);
+    db.bid.findFirst.mockImplementation(async () => highestInDb);
+    db.auctionAlias.findUnique.mockResolvedValue({ alias: "Postor-disp17" });
+    db.bid.create.mockImplementation(async ({ data }: { data: { buyerId: string; amount: string } }) => {
+      const created = {
+        id: `bid-${data.buyerId}`,
+        amount: new Prisma.Decimal(data.amount),
+        acceptedAt: new Date("2026-11-17T10:00:00.000Z"),
+      };
+      highestInDb = { id: created.id, amount: created.amount, buyerId: data.buyerId };
+      return created;
+    });
+    db.bid.count.mockResolvedValue(1);
+
+    const req1 = new Request("http://localhost:3000/api/auctions/sub-17/bids", {
+      method: "POST",
+      headers: {
+        origin: "http://localhost:3000",
+        cookie: `pf_session=${tokenBuyer1}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ amount: "150.00", requestId: "req-simul-1" }),
+    });
+    const req2 = new Request("http://localhost:3000/api/auctions/sub-17/bids", {
+      method: "POST",
+      headers: {
+        origin: "http://localhost:3000",
+        cookie: `pf_session=${tokenBuyer2}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ amount: "150.00", requestId: "req-simul-2" }),
+    });
+
+    const res1 = await postAuctionBidRoute(req1, ctx);
+    const res2 = await postAuctionBidRoute(req2, ctx);
+
+    expect(res1.status).toBe(201);
+    expect(res2.status).toBe(409);
+    const body2 = await res2.json();
+    expect(body2).toMatchObject({
+      ok: false,
+      error: {
+        code: "BID_TOO_LOW",
+        details: { minRequired: "160.00", highestBid: "150.00" },
+      },
+    });
+  });
+
+  it("Caso negativo 5: Oferta después del cierre oficial recibe 409 AUCTION_NOT_ACTIVE en POST /api/auctions/[id]/bids", async () => {
+    db.session.findUnique.mockResolvedValue({
+      expiresAt: new Date(Date.now() + 60_000),
+      user: {
+        id: "buyer-1",
+        nombreCompleto: "Comprador 1",
+        email: "comprador1@pujafacil.test",
+        status: "ACTIVA",
+        roles: [{ role: "COMPRADOR" }],
+      },
+    });
+    db.user.findUnique.mockResolvedValueOnce({
+      status: "ACTIVA",
+      roles: [{ role: "COMPRADOR" }],
+    });
+    db.$queryRaw.mockResolvedValueOnce([
+      {
+        ...makeActiveAuctionRow(),
+        closesAt: new Date(Date.now() - 5_000), // Cerró hace 5 segundos según reloj del servidor
+      },
+    ]);
+    db.article.findUnique.mockResolvedValueOnce({ ownerId: "vendedor-1", title: "Lote Cerrado" });
+    db.bid.findUnique.mockResolvedValueOnce(null);
+
+    const req = new Request("http://localhost:3000/api/auctions/sub-17/bids", {
+      method: "POST",
+      headers: {
+        origin: "http://localhost:3000",
+        cookie: `pf_session=${validToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ amount: "180.00", requestId: "req-after-close-17" }),
+    });
+
+    const res = await postAuctionBidRoute(req, ctx);
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      ok: false,
+      error: { code: "AUCTION_NOT_ACTIVE" },
+    });
+  });
+});
+
