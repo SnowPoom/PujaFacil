@@ -2,7 +2,7 @@ import type { AccountStatus, Role } from "@prisma/client";
 import type { Server, Socket } from "socket.io";
 import { ZodError } from "zod";
 import { getSessionFromCookieHeader } from "@/lib/auth/session";
-import { armSocketSessionExpiry, bindSocketSession, emitAuthorizedRoom, SocketSessionError, withSocketSession } from "@/lib/auth/socket-session";
+import { armSocketSessionExpiry, bindSocketSession, emitAuthorizedRoom, reportSocketDeliveryFailure, SocketSessionError, withSocketSession } from "@/lib/auth/socket-session";
 import { setSocketServer } from "@/lib/realtime";
 import { activateDueAuctions, closeDueAuctions } from "@/modules/bids/auction-closer";
 import { chatJoinSchema, chatSendSchema, type ChatMessageDto } from "@/modules/chat/chat-rules";
@@ -322,7 +322,7 @@ export function registerSocketHandlers(io: Server): void {
     socket.on("disconnecting", () => {
       const chatRooms = [...socket.rooms].filter((r) => r !== socket.id && isChatRoom(r));
       for (const room of chatRooms) {
-        void emitRoomPresence(io, room, socket.id);
+        void emitRoomPresence(io, room, socket.id).catch(() => reportSocketDeliveryFailure("chat:presence"));
       }
     });
   });

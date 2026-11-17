@@ -1,6 +1,7 @@
 /** Verificación adicional del cierre 17/11, independiente de Vitest y de C3.
  * Con PostgreSQL migrado y npm run dev:
  * node --env-file=.env --import tsx src/tests/auth-socket-session.integration.ts
+ * --delivery-burst ejecuta únicamente la ráfaga, conservando su limpieza.
  * Mantiene abierto el socket al revocar la sesión; no modifica módulos ajenos.
  * Un reset preparado en DB es un fixture: el consumo se realiza por HTTP real.
  */
@@ -247,8 +248,37 @@ async function sessionRaces() {
   assert.equal(await prisma.chatMessage.count({ where: { authorId: user.id } }), 1);
   console.log("PASS caducidad durante operación: rollback real del INSERT y ningún mensaje adicional persistido.");
 }
+async function concurrentDelivery() {
+  phase = "ráfaga de entregas autorizadas";
+  const clients: Socket[] = [];
+  for (let index = 0; index < 8; index++) {
+    const user = await fixture();
+    clients.push(await connect(await credential(user.email)));
+  }
+  const marker = `Rafaga ficticia ${randomUUID().replace(/\d/g, "x")} `;
+  const received = clients.map(() => new Set<string>());
+  for (const [index, socket] of clients.entries()) {
+    socket.on("chat:new", (message: { id: string; text: string }) => {
+      if (message.text.startsWith(marker)) received[index].add(message.id);
+    });
+  }
+  const started = performance.now();
+  const results: ChatSendAck[] = await Promise.all(Array.from({ length: 12 }, (_, index) =>
+    clients[index % clients.length].timeout(10_000).emitWithAck("chat:send", {
+      room: "general", text: `${marker}${index}`, clientMessageId: randomUUID(),
+    })));
+  assert.ok(results.every((result) => result.ok), "Una operación autorizada falló en la ráfaga.");
+  for (let attempt = 0; attempt < 250 && received.some((messages) => messages.size !== 12); attempt++) await delay(20);
+  assert.ok(received.every((messages) => messages.size === 12), "Se perdió una entrega a un cliente autorizado.");
+  assert.ok(clients.every((socket) => socket.connected), "Una conexión válida se desconectó durante la ráfaga.");
+  assert.equal(await prisma.chatMessage.count({ where: { text: { startsWith: marker } } }), 12);
+  const elapsed = Math.round(performance.now() - started);
+  for (const socket of clients) socket.disconnect();
+  console.log(`PASS ráfaga real: 12 mensajes concurrentes, 8 clientes, 96 entregas comprobadas, sin pérdida ni desconexión (${elapsed} ms).`);
+}
 async function main() {
   try {
+    if (process.argv.includes("--delivery-burst")) { await concurrentDelivery(); return; }
     for (const scenario of ["logout", "caducidad", "reset", "roles-invalidos"] as const) {
       phase = scenario;
       const email = `auth-session17-${randomUUID()}@example.test`; emails.push(email);
@@ -290,6 +320,7 @@ async function main() {
     }
     await privateDeliveryMatrix();
     await sessionRaces();
+    await concurrentDelivery();
   } finally {
     for (const socket of sockets) { socket.removeAllListeners(); socket.disconnect(); }
     try {

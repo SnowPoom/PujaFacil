@@ -5,13 +5,34 @@ import { hasValidRoles } from "@/lib/auth/roles";
 
 type Binding = { tokenHash: string; userId: string; expiresAt: Date };
 type Account = { userId: string; status: AccountStatus; roles: Role[] };
+export type ProtectedSocketEvent = "chat:new" | "chat:presence" | "auction:updated" | "notification:new";
+export type RoomEmissionResult = { sent: number; skipped: number; failed: number };
+
+// Solo códigos de eventos internos y cantidades: nunca payload, identidad,
+// cookie, hash de sesión ni el error completo de Prisma.
+export function reportSocketDeliveryFailure(event: ProtectedSocketEvent, failed = 1): void {
+  console.error("[realtime] ENTREGA_NO_DISPONIBLE", { event, failed });
+}
 // El hash no se serializa en socket.data ni se entrega a otros adaptadores/clientes.
 declare global {
   var __pfSocketSessionBindings: WeakMap<object, Binding> | undefined;
+  var __pfSocketDeliveryQueues: WeakMap<object, Promise<void>> | undefined;
 }
 // Next empaqueta los Route Handlers aparte del servidor Node personalizado.
 // Compartir el registro permite que logout/reset desconecten esos mismos sockets.
 const bindings = globalThis.__pfSocketSessionBindings ??= new WeakMap<object, Binding>();
+const deliveryQueues = globalThis.__pfSocketDeliveryQueues ??= new WeakMap<object, Promise<void>>();
+
+function deliverInOrder(socket: object, work: () => Promise<void>): Promise<void> {
+  const previous = deliveryQueues.get(socket);
+  // Un fallo se informa en su emisor; no debe bloquear eventos posteriores.
+  // El registro es compartido también por los emisores de los Route Handlers.
+  const current = previous ? previous.then(work, work) : work();
+  deliveryQueues.set(socket, current);
+  const release = () => { if (deliveryQueues.get(socket) === current) deliveryQueues.delete(socket); };
+  void current.then(release, release);
+  return current;
+}
 export function bindSocketSession(socket: object, binding: Binding): void {
   bindings.set(socket, binding);
 }
@@ -75,16 +96,32 @@ export function armSocketSessionExpiry(socket: Socket): void {
  * notificaciones. La comprobación no es un sondeo: ocurre antes de cada entrega.
  * La entrega síncrona se hace bajo el lock; una revocación concurrente espera.
  */
-export async function emitAuthorizedRoom(io: Server, room: string, event: string, payload: unknown): Promise<void> {
-  await Promise.all([...io.sockets.sockets.values()].filter((socket) => socket.rooms.has(room)).map(async (socket) => {
+export async function emitAuthorizedRoom(io: Server, room: string, event: ProtectedSocketEvent, payload: unknown): Promise<RoomEmissionResult> {
+  // sent significa despachado a Socket.IO, no un ACK de recepción del cliente.
+  const result: RoomEmissionResult = { sent: 0, skipped: 0, failed: 0 };
+  await Promise.all([...io.sockets.sockets.values()].filter((socket) => socket.rooms.has(room)).map((socket) => deliverInOrder(socket, async () => {
+    // Una espera en la cola no conserva ni membresía ni autorización antiguas.
+    if (!socket.connected || !socket.rooms.has(room)) { result.skipped++; return; }
+    let dispatched = false;
     try {
       await withSocketSession(socket, () => {
-        if (socket.connected && socket.rooms.has(room)) socket.emit(event, payload);
+        if (socket.connected && socket.rooms.has(room)) {
+          socket.emit(event, payload);
+          dispatched = true;
+          result.sent++;
+        } else result.skipped++;
       });
     } catch (error) {
       // Sin DB o con sesión revocada no se entregan datos. Pendiente puede seguir
       // conectado para activarse, pero no recibe eventos protegidos.
+      if (error instanceof SocketSessionError) {
+        if (!dispatched) result.skipped++;
+      }
+      else result.failed++;
       if (!(error instanceof SocketSessionError) || error.revoked) socket.disconnect(true);
     }
-  }));
+  })));
+  // Las denegaciones esperadas son distintas a perder una entrega por un fallo.
+  if (result.failed) reportSocketDeliveryFailure(event, result.failed);
+  return result;
 }
