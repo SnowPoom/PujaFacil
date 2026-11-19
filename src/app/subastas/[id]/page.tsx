@@ -1,3 +1,5 @@
+import { formatDate } from "@/lib/presentation";
+import { AuctionLiveRefresh, AuctionCountdown } from "@/components/auctions/AuctionLiveRefresh";
 import { Suspense } from "react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
@@ -29,51 +31,6 @@ function statusBadgeVariant(status: PublicAuctionDetail["status"]) {
   }
 }
 
-function formatInformativeCountdown(
-  auction: PublicAuctionDetail,
-  serverNow: Date,
-): string {
-  const nowMs = serverNow.getTime();
-  const opensMs = new Date(auction.opensAt).getTime();
-  const closesMs = new Date(auction.closesAt).getTime();
-
-  if (auction.status === "PROGRAMADA") {
-    const diff = opensMs - nowMs;
-    if (diff <= 0) {
-      return "Horario de apertura alcanzado (pendiente de activación oficial)";
-    }
-    const totalMinutes = Math.floor(diff / 60000);
-    const hours = Math.floor(totalMinutes / 60);
-    const mins = totalMinutes % 60;
-    return `Inicia en aprox. ${hours}h ${String(mins).padStart(2, "0")}m (informativo)`;
-  }
-
-  if (auction.status === "ACTIVA") {
-    const diff = closesMs - nowMs;
-    if (diff <= 0) {
-      return "Horario de cierre alcanzado (en proceso de resolución oficial)";
-    }
-    const totalMinutes = Math.floor(diff / 60000);
-    const hours = Math.floor(totalMinutes / 60);
-    const mins = totalMinutes % 60;
-    return `Restan aprox. ${hours}h ${String(mins).padStart(2, "0")}m para el cierre (informativo)`;
-  }
-
-  if (auction.status === "ADJUDICADA") {
-    return "Subasta finalizada y adjudicada";
-  }
-
-  if (auction.status === "CERRADA_SIN_OFERTAS") {
-    return "Subasta cerrada sin ofertas registradas";
-  }
-
-  if (auction.status === "SUSPENDIDA") {
-    return "Subasta temporalmente suspendida por administración";
-  }
-
-  return `Estado comercial: ${auction.status}`;
-}
-
 export default function AuctionDetailPage({ params }: AuctionDetailPageProps) {
   return (
     <main className="pf-page space-y-6">
@@ -100,7 +57,7 @@ async function AuctionDetailContent({ params }: AuctionDetailPageProps) {
     return (
       <Card>
         <div className="space-y-4">
-          <h1 className="text-2xl font-bold" style={{ color: "var(--pf-primary)" }}>
+          <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
             Subasta no disponible
           </h1>
           <p role="alert" className="pf-error">
@@ -116,18 +73,18 @@ async function AuctionDetailContent({ params }: AuctionDetailPageProps) {
 
   const serverNow = new Date();
   const serverNowIso = serverNow.toISOString();
-  const informativeCountdown = formatInformativeCountdown(auctionView, serverNow);
 
   return (
     <>
+      <AuctionLiveRefresh auctionId={id} enabled={isActiveAccount} />
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <span className="text-xs font-mono opacity-75">Subasta #{auctionView.id}</span>
-          <h1 className="text-2xl font-bold mt-1" style={{ color: "var(--pf-primary)" }}>
+          <h1 className="pf-title mt-1" style={{ color: "var(--pf-primary)" }}>
             {auctionView.article.title}
           </h1>
           <p className="text-sm mt-1">
-            Categoría: <strong>{auctionView.article.category}</strong> · Horario oficial controlado por el servidor.
+            Categoría: <strong>{auctionView.article.category}</strong> · Horarios de Ecuador continental (UTC−5).
           </p>
         </div>
         <Link href="/subastas" className="pf-btn-secondary">
@@ -157,7 +114,7 @@ async function AuctionDetailContent({ params }: AuctionDetailPageProps) {
                     <img
                       src={`/api/files/${encodeURIComponent(fileId)}`}
                       alt={`Fotografía ${index + 1} de ${auctionView.article.title}`}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-contain"
                     />
                   </div>
                 ))}
@@ -196,20 +153,20 @@ async function AuctionDetailContent({ params }: AuctionDetailPageProps) {
                 <dd className="mt-1 font-semibold">{auctionView.bidCount} pujas</dd>
               </div>
               <div>
-                <dt className="font-semibold opacity-75">Apertura oficial (Servidor)</dt>
-                <dd className="mt-1 font-mono text-xs">{auctionView.opensAt}</dd>
+                <dt className="font-semibold opacity-75">Apertura (Ecuador)</dt>
+                <dd className="mt-1 font-mono text-xs">{formatDate(auctionView.opensAt)}</dd>
               </div>
               <div>
-                <dt className="font-semibold opacity-75">Cierre oficial (Servidor)</dt>
-                <dd className="mt-1 font-mono text-xs">{auctionView.closesAt}</dd>
+                <dt className="font-semibold opacity-75">Cierre (Ecuador)</dt>
+                <dd className="mt-1 font-mono text-xs">{formatDate(auctionView.closesAt)}</dd>
               </div>
               <div>
-                <dt className="font-semibold opacity-75">Fecha/hora actual del servidor</dt>
-                <dd className="mt-1 font-mono text-xs">{serverNowIso}</dd>
+                <dt className="font-semibold opacity-75">Fecha y hora de referencia (Ecuador)</dt>
+                <dd className="mt-1 font-mono text-xs">{formatDate(serverNowIso)}</dd>
               </div>
               <div>
                 <dt className="font-semibold opacity-75">Cuenta regresiva informativa</dt>
-                <dd className="mt-1 text-xs font-medium">{informativeCountdown}</dd>
+                <dd className="mt-1 text-xs font-medium"><AuctionCountdown opensAt={auctionView.opensAt} closesAt={auctionView.closesAt} status={auctionView.status} /></dd>
               </div>
             </dl>
 
@@ -226,7 +183,7 @@ async function AuctionDetailContent({ params }: AuctionDetailPageProps) {
                 ) : auctionView.status === "CERRADA_SIN_OFERTAS" ? (
                   <span>Cerrada sin ofertas registradas</span>
                 ) : (
-                  <span>Subasta en curso — pendiente de cierre oficial</span>
+                  <span>{auctionView.status === "PROGRAMADA" ? "La subasta abrirá en el horario indicado" : auctionView.status === "SUSPENDIDA" ? "Subasta suspendida por administración" : auctionView.status === "CANCELADA" ? "Subasta cancelada" : "Subasta en curso"}</span>
                 )}
               </div>
               <Badge variant="neutral">Seudónimo protegido</Badge>
@@ -256,7 +213,7 @@ async function AuctionDetailContent({ params }: AuctionDetailPageProps) {
 
         <div className="space-y-6">
           <Card>
-            <h2 className="text-lg font-semibold mb-3">Panel de Ofertas en Vivo</h2>
+            <h2 className="text-lg font-semibold mb-3">Ofertas en vivo</h2>
             <AuctionBidPanel auctionId={id} />
           </Card>
         </div>

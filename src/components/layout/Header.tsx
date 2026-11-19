@@ -53,6 +53,7 @@ const AUTH_NAV: { href: string; label: string }[] = [
 /** Condicionales según rol */
 const ROLE_NAV: { role: UserRole; href: string; label: string }[] = [
   { role: "VENDEDOR", href: "/mis-articulos", label: "Mis artículos" },
+  { role: "VENDEDOR", href: "/mis-subastas", label: "Mis subastas" },
   { role: "COMPRADOR", href: "/mis-ofertas", label: "Mis ofertas" },
   { role: "VERIFICADOR", href: "/verificacion", label: "Verificación" },
   { role: "ADMIN_SUBASTAS", href: "/admin", label: "Administración" },
@@ -75,14 +76,18 @@ function NavLink({
   label,
   pathname,
   onClick,
+  disabled = false,
 }: {
   href: string;
   label: string;
   pathname: string;
   onClick?: () => void;
+  disabled?: boolean;
 }) {
   const isActive =
     href === "/" ? pathname === "/" : pathname.startsWith(href);
+
+  if (disabled) return <span className="pf-header__link pf-header__link--disabled" aria-disabled="true" title="Disponible cuando se active tu cuenta">{label} · Pendiente</span>;
 
   return (
     <Link
@@ -178,8 +183,8 @@ export default function Header() {
   /* ---- Build nav items ---- */
   const authNavItems = user
     ? [
-        ...AUTH_NAV,
-        ...ROLE_NAV.filter((item) => user.roles.includes(item.role)),
+        ...AUTH_NAV.map((item) => ({ ...item, disabled: user.status !== "ACTIVA" && ["/chat", "/notificaciones"].includes(item.href) })),
+        ...ROLE_NAV.filter((item) => user.roles.includes(item.role)).map((item) => ({ ...item, disabled: user.status !== "ACTIVA" })),
       ]
     : [];
 
@@ -207,9 +212,10 @@ export default function Header() {
         .pf-header__inner {
           max-width: var(--pf-max-w);
           margin-inline: auto;
-          padding: 0 24px;
-          height: 60px;
+          padding: 12px 24px;
+          min-height: 60px;
           display: flex;
+          flex-wrap: wrap;
           align-items: center;
           justify-content: space-between;
           gap: 16px;
@@ -230,7 +236,9 @@ export default function Header() {
           display: flex;
           align-items: center;
           gap: 4px;
-          flex-wrap: nowrap;
+          flex-wrap: wrap;
+          order: 3;
+          flex-basis: 100%;
         }
         .pf-header__link {
           font-family: var(--pf-font);
@@ -247,6 +255,7 @@ export default function Header() {
           background-color: rgba(255, 255, 255, 0.1);
           color: #FFFFFF;
         }
+        .pf-header__link--disabled { opacity: .65; cursor: help; }
         .pf-header__link:focus-visible {
           outline: 2px solid var(--pf-accent);
           outline-offset: 2px;
@@ -358,7 +367,7 @@ export default function Header() {
           padding: 8px 12px;
           flex-wrap: wrap;
         }
-        @media (max-width: 768px) {
+        @media (max-width: 900px) {
           .pf-header__hamburger {
             display: flex;
           }

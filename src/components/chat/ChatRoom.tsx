@@ -195,7 +195,7 @@ export default function ChatRoom() {
     connectionState === "Conectado" ? "success" : connectionState === "Conectando…" ? "accent" : "error";
 
   const roomLabel =
-    selectedRoom === GENERAL_ROOM ? "Sala general" : `Sala de subasta (${selectedRoom})`;
+    selectedRoom === GENERAL_ROOM ? "Sala general" : `Sala de subasta · ${selectedRoom.slice("auction:".length)}`;
 
   const visibleMessages = messages.filter((msg) => msg.room === selectedRoom);
 
@@ -203,7 +203,7 @@ export default function ChatRoom() {
     <Card className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b pb-4">
         <div>
-          <h1 className="text-2xl font-bold">Chat y atención en vivo</h1>
+          <h1 className="pf-title ">Chat y atención en vivo</h1>
           <p className="mt-1 text-sm">{roomLabel}</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">

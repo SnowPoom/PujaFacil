@@ -13,7 +13,7 @@ export async function POST(request: Request): Promise<Response> {
     if (user) {
       const token = randomBytes(32).toString("hex");
       await prisma.passwordReset.create({ data: { userId: user.id, tokenHash: hashToken(token), expiresAt: new Date(Date.now() + 600000) } });
-      if (process.env.NODE_ENV === "development") {
+      if (process.env.NODE_ENV === "development" || process.env.PASSWORD_RESET_DELIVERY === "console") {
         console.log(`[auth] Recuperación: ${new URL(`/restablecer-clave?token=${token}`, request.url).href}`);
       }
     }

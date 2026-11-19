@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/presentation";
 import { Prisma, type ArticleStatus, type FileKind, type ReviewDecision } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { AuditError, writeAuditEvent } from "@/lib/audit";
@@ -679,9 +680,9 @@ export async function decideReview(
       data: {
         userId: lockedArticle.ownerId,
         type: "REVISION_DECIDIDA",
-        title: `Resultado de revisión: ${input.decision}`,
-        body: `El expediente de tu artículo "${lockedArticle.title}" fue resuelto con estado ${input.decision}.`,
-        url: `/mis-articulos/${lockedArticle.id}`,
+        title: `Resultado de revisión: ${displayLabel(input.decision)}`,
+        body: `El expediente de tu artículo "${lockedArticle.title}" fue resuelto con estado ${displayLabel(input.decision)}.`,
+        url: `/mis-articulos/${lockedArticle.id}/editar`,
       },
     });
 

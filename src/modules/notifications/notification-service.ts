@@ -51,7 +51,7 @@ function toDto(row: NotificationRow): NotificationDto {
     type: row.type,
     title: row.title,
     body: row.body,
-    url: row.url,
+    url: safeInternalUrl(row.url),
     readAt: row.readAt ? row.readAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
   };
@@ -59,7 +59,8 @@ function toDto(row: NotificationRow): NotificationDto {
 
 /** Solo rutas internas relativas: evita enlaces externos en la bandeja. */
 function safeInternalUrl(url: string): string {
-  return url.startsWith("/") && !url.startsWith("//") ? url : "/notificaciones";
+  const normalized = /^\/mis-articulos\/[^/]+$/.test(url) ? `${url}/editar` : url;
+  return normalized.startsWith("/") && !normalized.startsWith("//") ? normalized : "/notificaciones";
 }
 
 /**

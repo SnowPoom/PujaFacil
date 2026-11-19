@@ -1,4 +1,5 @@
 "use client";
+import { formatDate, displayLabel } from "@/lib/presentation";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
@@ -25,6 +26,7 @@ interface PublicBidHistoryItem {
 }
 
 interface AuctionBidsState {
+  title: string;
   auctionId: string;
   status: AuctionStatus;
   startingPrice: string;
@@ -350,7 +352,7 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
           <dd className="font-semibold">{snapshot.bidCount}</dd>
         </div>
         <div className="flex items-center justify-between gap-2 pt-2 border-t" style={{ borderColor: "var(--pf-border)" }}>
-          <dt className="opacity-80">Tiempo restante ( informativo ):</dt>
+          <dt className="opacity-80">Tiempo restante:</dt>
           <dd className="font-mono text-xs font-semibold">
             {formatRemainingTime(snapshot.closesAt, nowMs)}
           </dd>
@@ -386,7 +388,7 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
         </form>
       ) : (
         <p className="text-xs opacity-80">
-          Esta subasta se encuentra en estado <strong>{snapshot.status}</strong> y no admite nuevas ofertas en este momento.
+          Esta subasta se encuentra en estado <strong>{displayLabel(snapshot.status)}</strong> y no admite nuevas ofertas en este momento.
         </p>
       )}
 
@@ -404,7 +406,7 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
                 className="flex items-center justify-between gap-2 py-1 border-b last:border-b-0"
                 style={{ borderColor: "var(--pf-border)" }}
               >
-                <span className="font-mono font-semibold">{item.alias}</span>
+                <span><span className="font-mono font-semibold">{item.alias}</span><time className="block text-[var(--pf-muted)]" dateTime={item.acceptedAt}>{formatDate(item.acceptedAt)}</time></span>
                 <span className="font-mono font-bold">${item.amount}</span>
               </li>
             ))}
@@ -415,7 +417,7 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
       <ConfirmDialog
         open={confirmOpen}
         title="Confirmar oferta en firme"
-        message={`¿Confirmas registrar tu oferta por $${amountInput.trim()} USD en la subasta #${auctionId}? Esta acción es vinculante.`}
+        message={`¿Confirmas registrar tu oferta por $${amountInput.trim()} USD por «${snapshot.title}» (subasta #${auctionId})? Si resulta ganadora, implica un compromiso comercial.`}
         confirmText="Confirmar oferta"
         cancelText="Cancelar"
         loading={submitting}

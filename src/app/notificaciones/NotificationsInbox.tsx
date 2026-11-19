@@ -1,4 +1,5 @@
 "use client";
+import { displayLabel, formatDate, humanizeText } from "@/lib/presentation";
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
@@ -22,7 +23,7 @@ function typeLabel(type: string): { label: string; variant: "neutral" | "success
     case "AUCTION_SCHEDULED":
       return { label: "Subasta programada", variant: "accent" };
     default:
-      return { label: type, variant: "neutral" };
+      return { label: displayLabel(type), variant: "neutral" };
   }
 }
 
@@ -95,7 +96,7 @@ export default function NotificationsInbox({
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: "var(--pf-primary)" }}>
+          <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
             Centro de notificaciones
           </h1>
           <p className="text-sm mt-1">
@@ -136,10 +137,7 @@ export default function NotificationsInbox({
             {items.map((item) => {
               const isUnread = item.readAt === null;
               const badgeInfo = typeLabel(item.type);
-              const formattedDate = new Date(item.createdAt).toLocaleString("es-EC", {
-                dateStyle: "short",
-                timeStyle: "short",
-              });
+              const formattedDate = formatDate(item.createdAt);
 
               return (
                 <li
@@ -160,8 +158,8 @@ export default function NotificationsInbox({
                         {formattedDate}
                       </time>
                     </div>
-                    <h2 className="text-base font-bold pt-1">{item.title}</h2>
-                    <p className="text-sm">{item.body}</p>
+                    <h2 className="text-base font-bold pt-1">{humanizeText(item.title)}</h2>
+                    <p className="text-sm">{humanizeText(item.body)}</p>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 shrink-0">

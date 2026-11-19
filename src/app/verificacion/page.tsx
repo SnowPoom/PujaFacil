@@ -37,14 +37,14 @@ async function VerificacionBandejaContent() {
     return (
       <Card>
         <div className="space-y-4">
-          <h1 className="text-2xl font-bold" style={{ color: "var(--pf-primary)" }}>
+          <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
             Acceso restringido
           </h1>
           <p role="alert" className="pf-error">
             Solo los verificadores con cuenta activa pueden consultar la bandeja de revisión documental.
           </p>
           <Link href="/panel" className="pf-btn-secondary inline-block">
-            Volver a mi panel
+            Volver al panel
           </Link>
         </div>
       </Card>
@@ -58,15 +58,15 @@ async function VerificacionBandejaContent() {
     <>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: "var(--pf-primary)" }}>
-            Bandeja del Verificador
+          <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
+            Bandeja de verificación
           </h1>
           <p className="text-sm mt-1">
             Expedientes asignados para validación documental y técnica antes de su publicación comercial.
           </p>
         </div>
         <Link href="/panel" className="pf-btn-secondary">
-          Volver a mi panel
+          Volver al panel
         </Link>
       </div>
 

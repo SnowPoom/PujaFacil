@@ -42,7 +42,7 @@ export type ActivatedAuctionSummary = {
 export async function closeDueAuctions(serverNow: Date = new Date()): Promise<ClosedAuctionSummary[]> {
   const dueCandidates = await prisma.auction.findMany({
     where: {
-      status: "ACTIVA",
+      status: { in: ["ACTIVA", "PROGRAMADA"] },
       closesAt: { lte: serverNow },
     },
     select: { id: true },
@@ -64,7 +64,7 @@ export async function closeDueAuctions(serverNow: Date = new Date()): Promise<Cl
 
       const closesAtDate = new Date(auction.closesAt);
       // Idempotencia: si ya fue cerrada/adjudicada o aún no venció según el reloj del servidor, omitir.
-      if (auction.status !== "ACTIVA" || closesAtDate.getTime() > serverNow.getTime()) {
+      if (!["ACTIVA", "PROGRAMADA"].includes(auction.status) || closesAtDate.getTime() > serverNow.getTime()) {
         return null;
       }
 

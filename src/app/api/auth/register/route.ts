@@ -21,7 +21,7 @@ export async function POST(request: Request): Promise<Response> {
     try { roles = JSON.parse(String(form.get("roles"))); } catch { throw new SyntaxError("Selecciona perfiles válidos."); }
     const input = registerSchema.parse({ ...Object.fromEntries(form), roles });
     const file = form.get("identidad");
-    if (!(file instanceof File)) throw new SyntaxError("Selecciona un documento ficticio.");
+    if (!(file instanceof File)) throw new SyntaxError("Selecciona un documento de identidad.");
     await validateUpload(file, "IDENTIDAD");
     const passwordHash = await bcrypt.hash(input.password, 12);
     const user = await prisma.$transaction(async (tx) => {

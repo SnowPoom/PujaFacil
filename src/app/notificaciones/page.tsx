@@ -21,13 +21,13 @@ async function NotificacionesContent() {
   if (user.status !== "ACTIVA") {
     return (
       <Card className="space-y-4">
-        <h1 className="text-2xl font-bold">Centro de notificaciones</h1>
+        <h1 className="pf-title ">Centro de notificaciones</h1>
         <p role="alert" className="pf-error">
           Tu cuenta debe estar activa para consultar y gestionar notificaciones.
         </p>
         <div>
           <Link href="/panel" className="pf-btn-secondary">
-            Volver a mi panel
+            Volver al panel
           </Link>
         </div>
       </Card>

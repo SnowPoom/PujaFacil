@@ -1613,6 +1613,16 @@ describe("Kevin 16/11 — Etapa 5: Cierre y adjudicación de subastas (auction-c
     expect(db.notification.create).not.toHaveBeenCalled();
   });
 
+  it("cierra una programada que venció mientras el servidor estuvo apagado", async () => {
+    db.auction.findMany.mockResolvedValueOnce([{ id: "programada-vencida" }]);
+    db.$queryRaw.mockResolvedValueOnce([{ id: "programada-vencida", articleId: "art-1", opensAt: pastOpen, closesAt: pastClose, status: "PROGRAMADA", winnerBidId: null, closedAt: null }]);
+    db.bid.findFirst.mockResolvedValueOnce(null); db.bid.count.mockResolvedValueOnce(0);
+    db.article.findUnique.mockResolvedValueOnce(null); db.auction.update.mockResolvedValueOnce({});
+    const result = await closeDueAuctions(serverNow);
+    expect(result[0].status).toBe("CERRADA_SIN_OFERTAS");
+    expect(db.auction.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { status: { in: ["ACTIVA", "PROGRAMADA"] }, closesAt: { lte: serverNow } } }));
+  });
+
   it("activateDueAuctions actualiza PROGRAMADA -> ACTIVA transaccionalmente cuando llegó la hora de apertura", async () => {
     const futureClose = new Date("2026-11-17T18:00:00.000Z");
     db.auction.findMany.mockResolvedValueOnce([{ id: "sub-prog" }]);

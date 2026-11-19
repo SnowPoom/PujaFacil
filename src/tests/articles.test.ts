@@ -38,6 +38,11 @@ const db = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
+const uploadMocks = vi.hoisted(() => ({ cleanup: vi.fn() }));
+vi.mock("@/lib/uploads", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/uploads")>(),
+  deleteFilesForDraft: uploadMocks.cleanup,
+}));
 
 // ─── Imports de módulos bajo prueba ─────────────────────────────────
 import {
@@ -147,6 +152,7 @@ function makeApiRequest(
 
 beforeEach(() => {
   vi.resetAllMocks();
+  uploadMocks.cleanup.mockResolvedValue(0);
   // Configuración predeterminada de transacción
   db.$transaction.mockImplementation(
     async (cb: (tx: typeof db) => Promise<unknown>) => cb(db)
@@ -294,7 +300,7 @@ describe("2. Creación y listado con paginación (createDraft y listOwnArticles)
         initialPrice: expect.any(Prisma.Decimal),
         status: "BORRADOR",
       },
-      include: { files: true },
+      include: { files: true, reviews: true },
     });
 
     expect(result.status).toBe("BORRADOR");
@@ -490,7 +496,7 @@ describe("4. Restricciones de estado, borrado y envío a revisión (updateDraft,
 
     const result = await deleteDraft("vendedor-a", "art-1");
     expect(result).toEqual({ deleted: true });
-    expect(db.fileRecord.deleteMany).toHaveBeenCalledWith({ where: { articleId: "art-1" } });
+    expect(uploadMocks.cleanup).toHaveBeenCalledWith("art-1", "vendedor-a");
     expect(db.article.delete).toHaveBeenCalledWith({ where: { id: "art-1" } });
   });
 
@@ -519,7 +525,7 @@ describe("4. Restricciones de estado, borrado y envío a revisión (updateDraft,
     expect(db.article.update).toHaveBeenCalledWith({
       where: { id: "art-1" },
       data: { status: "PENDIENTE_REVISION" },
-      include: { files: true },
+      include: { files: true, reviews: true },
     });
     expect(result.status).toBe("PENDIENTE_REVISION");
   });
@@ -858,5 +864,32 @@ describe("Catálogo público (/api/public/articles) e integración de archivos",
       ok: false,
       error: { code: "VALIDATION_ERROR", message: expect.any(String) },
     });
+  });
+});
+
+describe("Regresiones de expedientes y consistencia del borrado", () => {
+  it("conserva el artículo y propaga un fallo de almacenamiento al limpiar sus archivos", async () => {
+    db.article.findUnique.mockResolvedValue(createMockArticle());
+    db.auction.count.mockResolvedValue(0); db.review.count.mockResolvedValue(0);
+    uploadMocks.cleanup.mockRejectedValue(new Error("Disco no disponible"));
+    await expect(deleteDraft("vendedor-a", "art-1")).rejects.toThrow("Disco no disponible");
+    expect(db.article.delete).not.toHaveBeenCalled();
+    expect(db.fileRecord.deleteMany).not.toHaveBeenCalled();
+  });
+  it("devuelve observaciones y fechas de revisión al propietario sin exponer al verificador", async () => {
+    db.article.findUnique.mockResolvedValue({ ...createMockArticle(), reviews: [{
+      id: "review-1", verifierId: "interno", status: "REQUIERE_CORRECCIONES", comments: "Adjunta una fotografía del número de serie.",
+      assignedAt: new Date("2026-11-18T12:00:00Z"), decidedAt: new Date("2026-11-18T13:00:00Z"),
+    }] });
+    const result = await getOwnArticle("vendedor-a", "art-1");
+    expect(result.reviews?.[0]).toMatchObject({ comments: "Adjunta una fotografía del número de serie.", decidedAt: "2026-11-18T13:00:00.000Z" });
+    expect(result.reviews?.[0]).not.toHaveProperty("verifierId");
+  });
+  it("mantiene categorías de otras páginas aunque se filtre por un término sin resultados", async () => {
+    db.article.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([{ category: "Arte" }, { category: "Relojería" }]);
+    db.article.count.mockResolvedValue(0);
+    const response = await getPublicArticlesRoute(makeApiRequest("GET", "http://localhost:3000/api/public/articles?q=inexistente"));
+    expect((await response.json()).data.categories).toEqual(["Arte", "Relojería"]);
+    expect(db.article.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ distinct: ["category"], where: { status: { in: ["APROBADO", "ASOCIADO_SUBASTA"] } } }));
   });
 });

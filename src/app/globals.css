@@ -16,6 +16,14 @@
   --pf-primary-hover: #172E4C;
   --pf-accent: #C6A15B;
   --pf-border: #DDD9D1;
+  --pf-muted: #596575;
+  --pf-warning-bg: #FDF3E0;
+  --pf-warning-border: #F5D59B;
+  --pf-warning-text: #80540C;
+  --pf-success-bg: #EDF8F1;
+  --pf-success-border: #B9DFCA;
+  --pf-error-bg: #FEF1EF;
+  --pf-error-border: #F4C3BD;
   --pf-success: #237A57;
   --pf-error: #B42318;
 
@@ -218,19 +226,19 @@ body {
   border: 1px solid var(--pf-border);
 }
 .pf-badge--success {
-  background-color: #DCFCE7;
+  background-color: var(--pf-success-bg);
   color: var(--pf-success);
-  border-color: #BBF7D0;
+  border-color: var(--pf-success-border);
 }
 .pf-badge--error {
-  background-color: #FEE2E2;
+  background-color: var(--pf-error-bg);
   color: var(--pf-error);
-  border-color: #FECACA;
+  border-color: var(--pf-error-border);
 }
 .pf-badge--accent {
-  background-color: #FDF3E0;
-  color: #92610D;
-  border-color: #F5D59B;
+  background-color: var(--pf-warning-bg);
+  color: var(--pf-warning-text);
+  border-color: var(--pf-warning-border);
 }
 
 /* --- Overlay / Dialog --- */
@@ -338,4 +346,31 @@ body {
   .pf-pagination {
     gap: 8px;
   }
+}
+
+/* Jerarquía y superficies comunes a todas las pantallas. */
+.pf-title { color: var(--pf-primary); font-size: 1.75rem; font-weight: 700; line-height: 1.25; letter-spacing: -.025em; overflow-wrap: anywhere; }
+h2, h3 { color: var(--pf-primary); }
+.pf-page { width: 100%; padding-block: 32px; }
+.pf-page a:not(.pf-btn):not(.pf-btn-secondary) { color: var(--pf-primary); text-underline-offset: 3px; }
+.pf-page a:not(.pf-btn):not(.pf-btn-secondary):hover { text-decoration: underline; }
+.pf-card { box-shadow: 0 2px 8px rgb(31 41 51 / 3%); }
+.pf-card, .pf-page > *, .pf-page section, .pf-page dl > div { min-width: 0; }
+.pf-table th { color: var(--pf-primary); }
+.pf-table td { vertical-align: top; }
+.pf-table td.font-mono, .pf-page .font-mono { overflow-wrap: anywhere; }
+.pf-table th, .pf-table td { line-height: 1.5; }
+.pf-page .border { border-color: var(--pf-border); }
+.pf-input::placeholder { color: var(--pf-muted); opacity: .8; }
+.pf-input[type="file"] { padding: 8px; }
+.pf-input::file-selector-button { background: var(--pf-bg); border: 1px solid var(--pf-border); border-radius: 8px; padding: 7px 10px; margin-right: 10px; color: var(--pf-primary); cursor: pointer; }
+.pf-dialog { max-height: 90vh; overflow-y: auto; }
+.pf-detail-dialog { max-width: 720px; }
+.pf-overlay { overflow-y: auto; }
+.pf-alert { border-radius: var(--pf-radius); padding: 14px 18px; border: 1px solid var(--pf-border); }
+.pf-alert--warning { background: var(--pf-warning-bg); border-color: var(--pf-warning-border); color: var(--pf-warning-text); }
+@media (max-width: 640px) {
+ .pf-page { padding: 20px 16px; }
+ .pf-title { font-size: 1.5rem; }
+ .pf-pagination .pf-btn, .pf-pagination .pf-btn-secondary { width: auto; padding-inline: 12px; }
 }

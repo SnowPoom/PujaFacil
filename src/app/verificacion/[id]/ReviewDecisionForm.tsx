@@ -1,4 +1,5 @@
 "use client";
+import { displayLabel } from "@/lib/presentation";
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -65,7 +66,7 @@ export default function ReviewDecisionForm({ reviewId }: ReviewDecisionFormProps
 
       setCompleted(true);
       setSuccessMsg(
-        `Dictamen "${body.data.articleStatus}" registrado exitosamente para el expediente ${reviewId}.`,
+        `Dictamen "${displayLabel(body.data.articleStatus)}" registrado exitosamente para el expediente ${reviewId}.`,
       );
       router.refresh();
     } catch {
@@ -89,11 +90,11 @@ export default function ReviewDecisionForm({ reviewId }: ReviewDecisionFormProps
           className="pf-input"
           disabled={submitting || completed}
         >
-          <option value="APROBADO">APROBADO — Habilitar para programación de subasta</option>
+          <option value="APROBADO">Aprobar — Habilitar para programación de subasta</option>
           <option value="REQUIERE_CORRECCIONES">
-            REQUIERE_CORRECCIONES — Solicitar ajustes al vendedor
+            Solicitar correcciones — Solicitar ajustes al vendedor
           </option>
-          <option value="RECHAZADO">RECHAZADO — Denegar publicación comercial</option>
+          <option value="RECHAZADO">Rechazar — Denegar publicación comercial</option>
         </select>
       </div>
 

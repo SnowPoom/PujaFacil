@@ -1,4 +1,5 @@
 "use client";
+import { formatDate } from "@/lib/presentation";
 
 import React, { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import Link from "next/link";
@@ -21,7 +22,7 @@ const STATUS_CONFIG: Record<
 > = {
   BORRADOR: { label: "Borrador", variant: "neutral" },
   PENDIENTE_REVISION: { label: "Pendiente de revisión", variant: "accent" },
-  REQUIERE_CORRECCIONES: { label: "Requiere correcciones", variant: "error" },
+  REQUIERE_CORRECCIONES: { label: "Requiere correcciones", variant: "accent" },
   APROBADO: { label: "Aprobado", variant: "success" },
   RECHAZADO: { label: "Rechazado", variant: "error" },
   ASOCIADO_SUBASTA: { label: "Asociado a subasta", variant: "accent" },
@@ -360,7 +361,7 @@ function EditarArticuloContent() {
     return (
       <main className="pf-page">
         <Card className="text-center py-12 max-w-lg mx-auto">
-          <p className="text-sm text-slate-600 font-medium">Cargando artículo...</p>
+          <p className="text-sm text-[var(--pf-muted)] font-medium">Cargando artículo...</p>
         </Card>
       </main>
     );
@@ -371,16 +372,16 @@ function EditarArticuloContent() {
     return (
       <main className="pf-page">
         <Card className="text-center py-12 max-w-lg mx-auto">
-          <h1 className="text-xl font-bold mb-3 text-slate-800">
+          <h1 className="pf-title text-xl  mb-3">
             {httpStatus === 403 ? "Acceso denegado" : "Artículo no encontrado"}
           </h1>
-          <p className="text-sm text-slate-600 mb-6">
+          <p className="text-sm text-[var(--pf-muted)] mb-6">
             {httpStatus === 403
               ? "No tienes los permisos requeridos para acceder a este artículo."
               : "El artículo solicitado no existe o no se encuentra asociado a tu cuenta."}
           </p>
           <Link href="/mis-articulos" className="pf-btn">
-            Volver a Mis artículos
+            Volver a mis artículos
           </Link>
         </Card>
       </main>
@@ -408,16 +409,16 @@ function EditarArticuloContent() {
       <div className="mb-6">
         <Link
           href="/mis-articulos"
-          className="text-xs font-semibold text-slate-600 hover:text-slate-900 inline-flex items-center gap-1 mb-2"
+          className="text-xs font-semibold text-[var(--pf-muted)] hover:text-[var(--pf-text)] inline-flex items-center gap-1 mb-2"
         >
-          ← Volver a Mis artículos
+          ← Volver a mis artículos
         </Link>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+            <h1 className="pf-title ">
               {isEditable ? "Editar artículo" : "Detalle del artículo"}
             </h1>
-            <p className="text-sm text-slate-600 mt-1">
+            <p className="text-sm text-[var(--pf-muted)] mt-1">
               Código de referencia: <span className="font-mono text-xs">{article.id}</span>
             </p>
           </div>
@@ -429,11 +430,11 @@ function EditarArticuloContent() {
 
       {/* Alertas de feedback general */}
       {successMsg && (
-        <div className="pf-card border-green-200 bg-green-50 mb-6 flex justify-between items-center py-3">
+        <div className="pf-card border-[var(--pf-success-border)] bg-[var(--pf-success-bg)] mb-6 flex justify-between items-center py-3">
           <p className="pf-success font-medium my-0">{successMsg}</p>
           <button
             type="button"
-            className="text-xs text-slate-500 hover:text-slate-800 px-2"
+            className="text-xs text-[var(--pf-muted)] hover:text-[var(--pf-text)] px-2"
             onClick={() => setSuccessMsg(null)}
             aria-label="Cerrar mensaje"
           >
@@ -443,11 +444,11 @@ function EditarArticuloContent() {
       )}
 
       {apiError && (
-        <div className="pf-card border-red-200 bg-red-50 mb-6 flex justify-between items-center py-3">
+        <div className="pf-card border-[var(--pf-error-border)] bg-[var(--pf-error-bg)] mb-6 flex justify-between items-center py-3">
           <p className="pf-error font-medium my-0">{apiError}</p>
           <button
             type="button"
-            className="text-xs text-slate-500 hover:text-slate-800 px-2"
+            className="text-xs text-[var(--pf-muted)] hover:text-[var(--pf-text)] px-2"
             onClick={() => setApiError(null)}
             aria-label="Cerrar mensaje de error"
           >
@@ -458,11 +459,11 @@ function EditarArticuloContent() {
 
       {/* Alertas de subida de archivos */}
       {fileSuccess && (
-        <div className="pf-card border-green-200 bg-green-50 mb-6 flex justify-between items-center py-3">
+        <div className="pf-card border-[var(--pf-success-border)] bg-[var(--pf-success-bg)] mb-6 flex justify-between items-center py-3">
           <p className="pf-success font-medium my-0">{fileSuccess}</p>
           <button
             type="button"
-            className="text-xs text-slate-500 hover:text-slate-800 px-2"
+            className="text-xs text-[var(--pf-muted)] hover:text-[var(--pf-text)] px-2"
             onClick={() => setFileSuccess(null)}
             aria-label="Cerrar mensaje"
           >
@@ -472,11 +473,11 @@ function EditarArticuloContent() {
       )}
 
       {fileError && (
-        <div className="pf-card border-red-200 bg-red-50 mb-6 flex justify-between items-center py-3">
+        <div className="pf-card border-[var(--pf-error-border)] bg-[var(--pf-error-bg)] mb-6 flex justify-between items-center py-3">
           <p className="pf-error font-medium my-0">{fileError}</p>
           <button
             type="button"
-            className="text-xs text-slate-500 hover:text-slate-800 px-2"
+            className="text-xs text-[var(--pf-muted)] hover:text-[var(--pf-text)] px-2"
             onClick={() => setFileError(null)}
             aria-label="Cerrar mensaje de error"
           >
@@ -485,12 +486,20 @@ function EditarArticuloContent() {
         </div>
       )}
 
+          {article.reviews?.some((review) => review.comments) && <Card>
+            <h2 className="text-lg font-semibold mb-3">Observaciones de verificación</h2>
+            <ul className="space-y-3">{article.reviews.filter((review) => review.comments).map((review) => <li key={review.id} className="border rounded-xl p-4">
+              <div className="flex flex-wrap gap-3 items-center"><Badge>{review.status ?? "PENDIENTE_REVISION"}</Badge>{review.decidedAt && <time className="text-xs text-[var(--pf-muted)]" dateTime={review.decidedAt}>{formatDate(review.decidedAt)}</time>}</div>
+              <p className="mt-2 whitespace-pre-wrap">{review.comments}</p>
+            </li>)}</ul>
+          </Card>}
+
       {/* MODO LECTURA: cuando no es editable */}
       {!isEditable ? (
         <Card className="max-w-3xl">
           {/* Banner de estado no editable */}
-          <div className="pf-card bg-amber-50 border-amber-200 mb-6 py-3">
-            <p className="text-sm text-amber-900 my-0 font-medium">
+          <div className="pf-card bg-[var(--pf-warning-bg)] border-[var(--pf-warning-border)] mb-6 py-3">
+            <p className="text-sm text-[var(--pf-warning-text)] my-0 font-medium">
               ℹ️ Este artículo se encuentra en estado <strong>{currentStatusMeta.label}</strong>{" "}
               y no admite modificaciones en este momento.
             </p>
@@ -498,49 +507,49 @@ function EditarArticuloContent() {
 
           <div className="space-y-6">
             <div>
-              <h2 className="pf-label text-slate-500 mb-1">Título del artículo</h2>
-              <p className="text-lg font-semibold text-slate-900">{article.title}</p>
+              <h2 className="pf-label text-[var(--pf-muted)] mb-1">Título del artículo</h2>
+              <p className="text-lg font-semibold text-[var(--pf-text)]">{article.title}</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <h2 className="pf-label text-slate-500 mb-1">Categoría</h2>
-                <p className="text-sm font-medium text-slate-800">{article.category}</p>
+                <h2 className="pf-label text-[var(--pf-muted)] mb-1">Categoría</h2>
+                <p className="text-sm font-medium text-[var(--pf-text)]">{article.category}</p>
               </div>
               <div>
-                <h2 className="pf-label text-slate-500 mb-1">Condición</h2>
-                <p className="text-sm font-medium text-slate-800">{article.condition}</p>
+                <h2 className="pf-label text-[var(--pf-muted)] mb-1">Condición</h2>
+                <p className="text-sm font-medium text-[var(--pf-text)]">{article.condition}</p>
               </div>
             </div>
 
             <div>
-              <h2 className="pf-label text-slate-500 mb-1">Precio inicial</h2>
-              <p className="text-lg font-bold text-slate-900">${article.initialPrice} USD</p>
+              <h2 className="pf-label text-[var(--pf-muted)] mb-1">Precio inicial</h2>
+              <p className="text-lg font-bold text-[var(--pf-text)]">${article.initialPrice} USD</p>
             </div>
 
             <div>
-              <h2 className="pf-label text-slate-500 mb-1">Descripción</h2>
-              <p className="text-sm text-slate-700 whitespace-pre-line bg-slate-50 p-4 rounded-lg border border-slate-200">
+              <h2 className="pf-label text-[var(--pf-muted)] mb-1">Descripción</h2>
+              <p className="text-sm text-[var(--pf-text)] whitespace-pre-line bg-[var(--pf-bg)] p-4 rounded-lg border border-[var(--pf-border)]">
                 {article.description}
               </p>
             </div>
 
             <div>
-              <h2 className="pf-label text-slate-500 mb-1">Procedencia e Historia</h2>
-              <p className="text-sm text-slate-700 whitespace-pre-line bg-slate-50 p-4 rounded-lg border border-slate-200">
+              <h2 className="pf-label text-[var(--pf-muted)] mb-1">Procedencia e Historia</h2>
+              <p className="text-sm text-[var(--pf-text)] whitespace-pre-line bg-[var(--pf-bg)] p-4 rounded-lg border border-[var(--pf-border)]">
                 {article.provenance}
               </p>
             </div>
 
             {/* Galería de Fotografías en Modo Lectura */}
             <div>
-              <h2 className="pf-label text-slate-700 mb-2">Fotografías del expediente</h2>
+              <h2 className="pf-label text-[var(--pf-text)] mb-2">Fotografías del expediente</h2>
               {photos.length > 0 ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                   {photos.map((photo) => (
                     <div
                       key={photo.id}
-                      className="border border-slate-200 rounded-lg overflow-hidden bg-slate-50"
+                      className="border border-[var(--pf-border)] rounded-lg overflow-hidden bg-[var(--pf-bg)]"
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
@@ -549,11 +558,11 @@ function EditarArticuloContent() {
                         className="w-full h-32 object-cover"
                         loading="lazy"
                       />
-                      <div className="p-2 text-xs text-slate-600 truncate border-t border-slate-100 bg-white">
+                      <div className="p-2 text-xs text-[var(--pf-muted)] truncate border-t border-[var(--pf-border)] bg-white">
                         <span className="truncate block" title={photo.originalName}>
                           {photo.originalName}
                         </span>
-                        <span className="text-[10px] text-slate-400">
+                        <span className="text-[10px] text-[var(--pf-muted)]">
                           {(photo.size / (1024 * 1024)).toFixed(2)} MB
                         </span>
                       </div>
@@ -561,29 +570,29 @@ function EditarArticuloContent() {
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-slate-500 italic">No hay fotografías asociadas.</p>
+                <p className="text-xs text-[var(--pf-muted)] italic">No hay fotografías asociadas.</p>
               )}
             </div>
 
             {/* Certificado PDF en Modo Lectura */}
             <div>
-              <h2 className="pf-label text-slate-700 mb-2">Certificado de autenticidad</h2>
+              <h2 className="pf-label text-[var(--pf-text)] mb-2">Certificado de autenticidad</h2>
               {certificates.length > 0 ? (
                 <div className="space-y-2">
                   {certificates.map((cert) => (
                     <div
                       key={cert.id}
-                      className="flex items-center justify-between p-3 border border-slate-200 rounded-lg bg-slate-50"
+                      className="flex items-center justify-between p-3 border border-[var(--pf-border)] rounded-lg bg-[var(--pf-bg)]"
                     >
                       <div className="flex items-center gap-2 truncate">
                         <span className="text-lg" aria-hidden="true">
                           📄
                         </span>
                         <div className="truncate">
-                          <p className="text-sm font-semibold text-slate-800 truncate">
+                          <p className="text-sm font-semibold text-[var(--pf-text)] truncate">
                             {cert.originalName}
                           </p>
-                          <p className="text-xs text-slate-500">
+                          <p className="text-xs text-[var(--pf-muted)]">
                             {(cert.size / (1024 * 1024)).toFixed(2)} MB
                           </p>
                         </div>
@@ -600,14 +609,14 @@ function EditarArticuloContent() {
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-slate-500 italic">No se adjuntó certificado de autenticidad.</p>
+                <p className="text-xs text-[var(--pf-muted)] italic">No se adjuntó certificado de autenticidad.</p>
               )}
             </div>
           </div>
 
-          <div className="pt-6 border-t border-slate-200 mt-6 flex justify-end">
+          <div className="pt-6 border-t border-[var(--pf-border)] mt-6 flex justify-end">
             <Link href="/mis-articulos" className="pf-btn-secondary">
-              Volver a Mis artículos
+              Volver a mis artículos
             </Link>
           </div>
         </Card>
@@ -615,18 +624,19 @@ function EditarArticuloContent() {
         /* MODO EDICIÓN: BORRADOR o REQUIERE_CORRECCIONES */
         <div className="space-y-6 max-w-3xl">
           {article.status === "REQUIERE_CORRECCIONES" && (
-            <div className="pf-card bg-amber-50 border-amber-200 py-3">
-              <p className="text-sm text-amber-900 my-0 font-medium">
+            <div className="pf-card bg-[var(--pf-warning-bg)] border-[var(--pf-warning-border)] py-3">
+              <p className="text-sm text-[var(--pf-warning-text)] my-0 font-medium">
                 ⚠️ Este artículo requiere correcciones antes de ser aprobado. Revisa los datos,
                 actualiza la información o fotografías necesarias y vuelve a enviarlo a revisión.
               </p>
             </div>
           )}
 
+
           {/* Formulario de Datos del Artículo */}
           <Card>
             <form onSubmit={handleSaveChanges} noValidate>
-              <h2 className="text-lg font-bold text-slate-900 mb-4 pb-2 border-b border-slate-200">
+              <h2 className="text-lg font-bold text-[var(--pf-text)] mb-4 pb-2 border-b border-[var(--pf-border)]">
                 Información del artículo
               </h2>
 
@@ -736,7 +746,7 @@ function EditarArticuloContent() {
                     {fieldErrors.description}
                   </p>
                 ) : (
-                  <p className="text-xs text-slate-500 mt-1">Mínimo 20 caracteres.</p>
+                  <p className="text-xs text-[var(--pf-muted)] mt-1">Mínimo 20 caracteres.</p>
                 )}
               </div>
 
@@ -762,7 +772,7 @@ function EditarArticuloContent() {
                     {fieldErrors.provenance}
                   </p>
                 ) : (
-                  <p className="text-xs text-slate-500 mt-1">Mínimo 10 caracteres.</p>
+                  <p className="text-xs text-[var(--pf-muted)] mt-1">Mínimo 10 caracteres.</p>
                 )}
               </div>
 
@@ -781,26 +791,26 @@ function EditarArticuloContent() {
 
           {/* Sección de Archivos del Expediente (Fotos y Certificado) */}
           <Card>
-            <h2 className="text-lg font-bold text-slate-900 mb-1">
+            <h2 className="text-lg font-bold text-[var(--pf-text)] mb-1">
               Archivos del expediente
             </h2>
-            <p className="text-xs text-slate-600 mb-6">
+            <p className="text-xs text-[var(--pf-muted)] mb-6">
               Adjunta las fotografías descriptivas de la pieza y, si dispones de él, el certificado de autenticidad en PDF.
             </p>
 
             {/* Subsección: Fotografías */}
-            <div className="mb-6 pb-6 border-b border-slate-200">
+            <div className="mb-6 pb-6 border-b border-[var(--pf-border)]">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
                 <div>
-                  <h3 className="font-semibold text-sm text-slate-900">
+                  <h3 className="font-semibold text-sm text-[var(--pf-text)]">
                     Fotografías del artículo{" "}
-                    <span className="text-red-600 font-normal">* (obligatoria al menos 1)</span>
+                    <span className="text-[var(--pf-error)] font-normal">* (obligatoria al menos 1)</span>
                   </h3>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-[var(--pf-muted)]">
                     Formatos JPG, PNG o WebP. Tamaño máximo 10 MB por imagen.
                   </p>
                 </div>
-                <span className="text-xs font-semibold px-2 py-1 bg-slate-100 rounded text-slate-700 self-start sm:self-auto">
+                <span className="text-xs font-semibold px-2 py-1 bg-[var(--pf-bg)] rounded text-[var(--pf-text)] self-start sm:self-auto">
                   {photosCount} foto(s) cargada(s)
                 </span>
               </div>
@@ -811,7 +821,7 @@ function EditarArticuloContent() {
                   {photos.map((photo) => (
                     <div
                       key={photo.id}
-                      className="border border-slate-200 rounded-lg overflow-hidden bg-slate-50 shadow-sm"
+                      className="border border-[var(--pf-border)] rounded-lg overflow-hidden bg-[var(--pf-bg)] shadow-sm"
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
@@ -820,11 +830,11 @@ function EditarArticuloContent() {
                         className="w-full h-32 object-cover"
                         loading="lazy"
                       />
-                      <div className="p-2 text-xs text-slate-600 bg-white border-t border-slate-100">
+                      <div className="p-2 text-xs text-[var(--pf-muted)] bg-white border-t border-[var(--pf-border)]">
                         <span className="truncate block font-medium" title={photo.originalName}>
                           {photo.originalName}
                         </span>
-                        <span className="text-[10px] text-slate-400">
+                        <span className="text-[10px] text-[var(--pf-muted)]">
                           {(photo.size / (1024 * 1024)).toFixed(2)} MB
                         </span>
                       </div>
@@ -832,8 +842,8 @@ function EditarArticuloContent() {
                   ))}
                 </div>
               ) : (
-                <div className="border border-dashed border-amber-300 bg-amber-50 rounded-lg p-4 mb-4 text-center">
-                  <p className="text-xs text-amber-900 font-medium">
+                <div className="border border-dashed border-[var(--pf-warning-border)] bg-[var(--pf-warning-bg)] rounded-lg p-4 mb-4 text-center">
+                  <p className="text-xs text-[var(--pf-warning-text)] font-medium">
                     ⚠️ Aún no has subido ninguna fotografía. Debes subir al menos una foto para poder enviar el artículo a verificación.
                   </p>
                 </div>
@@ -851,7 +861,7 @@ function EditarArticuloContent() {
                   className="pf-input text-xs"
                 />
                 {uploadingPhoto && (
-                  <span className="text-xs text-slate-600 font-medium animate-pulse whitespace-nowrap">
+                  <span className="text-xs text-[var(--pf-muted)] font-medium animate-pulse whitespace-nowrap">
                     Subiendo archivo…
                   </span>
                 )}
@@ -862,10 +872,10 @@ function EditarArticuloContent() {
             <div>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
                 <div>
-                  <h3 className="font-semibold text-sm text-slate-900">
-                    Certificado de autenticidad <span className="text-slate-500 font-normal">(opcional)</span>
+                  <h3 className="font-semibold text-sm text-[var(--pf-text)]">
+                    Certificado de autenticidad <span className="text-[var(--pf-muted)] font-normal">(opcional)</span>
                   </h3>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-[var(--pf-muted)]">
                     Formato PDF. Tamaño máximo 20 MB.
                   </p>
                 </div>
@@ -877,17 +887,17 @@ function EditarArticuloContent() {
                   {certificates.map((cert) => (
                     <div
                       key={cert.id}
-                      className="flex items-center justify-between p-3 border border-slate-200 rounded-lg bg-slate-50"
+                      className="flex items-center justify-between p-3 border border-[var(--pf-border)] rounded-lg bg-[var(--pf-bg)]"
                     >
                       <div className="flex items-center gap-2 truncate">
                         <span className="text-xl" aria-hidden="true">
                           📄
                         </span>
                         <div className="truncate">
-                          <p className="text-sm font-semibold text-slate-800 truncate">
+                          <p className="text-sm font-semibold text-[var(--pf-text)] truncate">
                             {cert.originalName}
                           </p>
-                          <p className="text-xs text-slate-500">
+                          <p className="text-xs text-[var(--pf-muted)]">
                             {(cert.size / (1024 * 1024)).toFixed(2)} MB
                           </p>
                         </div>
@@ -904,7 +914,7 @@ function EditarArticuloContent() {
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-slate-500 italic mb-4">
+                <p className="text-xs text-[var(--pf-muted)] italic mb-4">
                   No se ha adjuntado certificado todavía.
                 </p>
               )}
@@ -921,7 +931,7 @@ function EditarArticuloContent() {
                   className="pf-input text-xs"
                 />
                 {uploadingCert && (
-                  <span className="text-xs text-slate-600 font-medium animate-pulse whitespace-nowrap">
+                  <span className="text-xs text-[var(--pf-muted)] font-medium animate-pulse whitespace-nowrap">
                     Subiendo archivo…
                   </span>
                 )}
@@ -965,7 +975,7 @@ function EditarArticuloContent() {
                 </Button>
 
                 {photosCount === 0 && (
-                  <p className="text-xs text-red-600 font-medium mt-1 text-center sm:text-right">
+                  <p className="text-xs text-[var(--pf-error)] font-medium mt-1 text-center sm:text-right">
                     Debes subir al menos una fotografía antes de enviar el artículo a verificación.
                   </p>
                 )}

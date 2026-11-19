@@ -1,3 +1,4 @@
+import { displayLabel } from "@/lib/presentation";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { deleteFilesForDraft, UploadError } from "@/lib/uploads";
@@ -46,25 +47,30 @@ function serializeArticle(article: RawArticle) {
     createdAt: article.createdAt.toISOString(),
     updatedAt: article.updatedAt.toISOString(),
     files: sortedFiles?.map(serializeFile),
+    reviews: article.reviews?.map((review) => ({
+      id: review.id, status: review.status, comments: review.comments,
+      assignedAt: review.assignedAt.toISOString(), decidedAt: review.decidedAt?.toISOString() ?? null,
+    })),
   };
 }
 
 type RawArticle = Prisma.ArticleGetPayload<{
-  include: { files: true };
+  include: { files: true; reviews: true };
 }>;
 
 type RawFile = Prisma.FileRecordGetPayload<object>;
 
 function serializeFile(file: RawFile) {
   return {
-    ...file,
+    id: file.id, kind: file.kind, mimeType: file.mimeType,
+    originalName: file.originalName, size: file.size,
     createdAt: file.createdAt.toISOString(),
   };
 }
 
 /** Serialización ligera para listados (sin relación files). */
 function serializeArticleLight(
-  article: Omit<RawArticle, "files"> & { files?: undefined },
+  article: Omit<RawArticle, "files" | "reviews"> & { files?: undefined },
 ) {
   return {
     ...article,
@@ -78,7 +84,7 @@ function serializeArticleLight(
 async function findOwnArticleOrFail(userId: string, id: string) {
   const article = await prisma.article.findUnique({
     where: { id },
-    include: { files: true },
+    include: { files: true, reviews: { orderBy: [{ assignedAt: "desc" }, { id: "desc" }] } },
   });
 
   if (!article || article.ownerId !== userId) {
@@ -124,7 +130,7 @@ export async function listOwnArticles(
 
   return {
     items: items.map((item) =>
-      serializeArticleLight(item as Omit<RawArticle, "files"> & { files?: undefined }),
+      serializeArticleLight(item as Omit<RawArticle, "files" | "reviews"> & { files?: undefined }),
     ),
     page,
     pageSize,
@@ -154,7 +160,7 @@ export async function createDraft(userId: string, input: ArticleInput) {
       initialPrice: new Prisma.Decimal(input.initialPrice),
       status: "BORRADOR",
     },
-    include: { files: true },
+    include: { files: true, reviews: true },
   });
 
   return serializeArticle(article);
@@ -175,7 +181,7 @@ export async function updateDraft(
     throw new ArticleServiceError(
       409,
       "INVALID_STATE",
-      `No se puede editar un artículo en estado "${existing.status}". Solo se permiten ediciones en estado BORRADOR o REQUIERE_CORRECCIONES`,
+      `No se puede editar un artículo en estado "${displayLabel(existing.status)}". Solo se permiten ediciones en borrador o cuando se requieren correcciones`,
     );
   }
 
@@ -192,7 +198,7 @@ export async function updateDraft(
   const updated = await prisma.article.update({
     where: { id },
     data,
-    include: { files: true },
+    include: { files: true, reviews: true },
   });
 
   return serializeArticle(updated);
@@ -207,7 +213,7 @@ export async function deleteDraft(userId: string, id: string) {
     throw new ArticleServiceError(
       409,
       "CANNOT_DELETE",
-      `Solo se pueden eliminar artículos en estado BORRADOR (actual: "${existing.status}")`,
+      `Solo se pueden eliminar artículos en borrador (actual: "${displayLabel(existing.status)}")`,
     );
   }
 
@@ -226,25 +232,13 @@ export async function deleteDraft(userId: string, id: string) {
   }
 
   // Invocar deleteFilesForDraft de src/lib/uploads.ts para limpiar archivos físicos y registros
-  let filesDeleted = false;
-  if (typeof deleteFilesForDraft === "function") {
-    try {
-      await deleteFilesForDraft(id, userId);
-      filesDeleted = true;
-    } catch (err) {
-      if (err instanceof UploadError) {
-        throw new ArticleServiceError(
-          err.status as 400 | 403 | 404 | 409,
-          err.code,
-          err.message,
-        );
-      }
-      // Respaldo seguro si falla por entorno de pruebas (mock de Prisma) o almacenamiento
+  try {
+    await deleteFilesForDraft(id, userId);
+  } catch (err) {
+    if (err instanceof UploadError) {
+      throw new ArticleServiceError(err.status as 400 | 403 | 404 | 409, err.code, err.message);
     }
-  }
-
-  if (!filesDeleted) {
-    await prisma.fileRecord.deleteMany({ where: { articleId: id } });
+    throw err;
   }
 
   await prisma.article.delete({ where: { id } });
@@ -261,7 +255,7 @@ export async function submitForReview(userId: string, id: string) {
     throw new ArticleServiceError(
       409,
       "INVALID_STATE",
-      `No se puede enviar a verificación un artículo en estado "${existing.status}". Solo se permite en estado BORRADOR o REQUIERE_CORRECCIONES`,
+      `No se puede enviar a verificación un artículo en estado "${displayLabel(existing.status)}". Solo se permite en borrador o cuando se requieren correcciones`,
     );
   }
 
@@ -281,7 +275,7 @@ export async function submitForReview(userId: string, id: string) {
   const updated = await prisma.article.update({
     where: { id },
     data: { status: "PENDIENTE_REVISION" },
-    include: { files: true },
+    include: { files: true, reviews: true },
   });
 
   return serializeArticle(updated);

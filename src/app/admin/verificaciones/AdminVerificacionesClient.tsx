@@ -138,7 +138,7 @@ export default function AdminVerificacionesClient({
 
         {articles.length === 0 ? (
           <p className="text-sm opacity-80 py-4" role="status">
-            No hay artículos en estado PENDIENTE_REVISION en este momento.
+            No hay artículos pendientes de revisión en este momento.
           </p>
         ) : (
           <div className="overflow-x-auto">

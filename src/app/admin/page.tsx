@@ -23,14 +23,14 @@ async function AdminDashboardContent() {
     return (
       <Card>
         <div className="space-y-4">
-          <h1 className="text-2xl font-bold" style={{ color: "var(--pf-primary)" }}>
+          <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
             Acceso restringido
           </h1>
           <p role="alert" className="pf-error">
             Solo un administrador de subastas con cuenta activa puede consultar el resumen de administración.
           </p>
           <Link href="/panel" className="pf-btn-secondary inline-block">
-            Volver a mi panel
+            Volver al panel
           </Link>
         </div>
       </Card>
@@ -78,8 +78,8 @@ async function AdminDashboardContent() {
     <>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: "var(--pf-primary)" }}>
-            Resumen de Administración de Subastas
+          <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
+            Administración de subastas
           </h1>
           <p className="text-sm mt-1">
             Indicadores operativos de verificación de lotes, programación comercial y actividad de ofertas.
