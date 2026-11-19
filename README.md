@@ -1,6 +1,6 @@
 # PujaFácil — Casa de Subastas en Línea
 
-PujaFácil es una plataforma web de subastas privadas para una casa de subastas PYME ecuatoriana. Permite comercializar artículos exclusivos y de alto valor mediante publicaciones administradas, verificación de autenticidad y ofertas concurrentes. Resuelve la dispersión de expedientes, ofertas y conversaciones de una operación manual, manteniendo la confidencialidad de los participantes. Proyecto desarrollado para el primer bimestre de **Aplicaciones Web Avanzadas** y **Desarrollo de Software Seguro**.
+PujaFácil es una plataforma web de subastas privadas para Casa de Subastas Áurea, PYME ecuatoriana. Permite comercializar artículos exclusivos y de alto valor mediante publicaciones administradas, verificación de autenticidad y ofertas concurrentes. Resuelve la dispersión de expedientes, ofertas y conversaciones de una operación manual, manteniendo la confidencialidad de los participantes. Proyecto desarrollado para el primer bimestre de **Aplicaciones Web Avanzadas** y **Desarrollo de Software Seguro**.
 
 ---
 
