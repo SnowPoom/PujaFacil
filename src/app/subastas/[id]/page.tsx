@@ -1,5 +1,7 @@
+import { bidRestriction } from "@/lib/auth/roles";
+import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/presentation";
-import { AuctionLiveRefresh, AuctionCountdown } from "@/components/auctions/AuctionLiveRefresh";
+import { AuctionCountdown } from "@/components/auctions/AuctionLiveRefresh";
 import { Suspense } from "react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
@@ -43,12 +45,11 @@ export default function AuctionDetailPage({ params }: AuctionDetailPageProps) {
 
 async function AuctionDetailContent({ params }: AuctionDetailPageProps) {
   const { id } = await params;
-  const user = await getCurrentUser().catch(() => null);
-  const isActiveAccount = user?.status === "ACTIVA";
+  let user: Awaited<ReturnType<typeof getCurrentUser>>;
 
   let auctionView: PublicAuctionDetail;
   try {
-    auctionView = await getPublicAuction(id);
+    [user, auctionView] = await Promise.all([getCurrentUser().catch(() => null), getPublicAuction(id)]);
   } catch (error) {
     const message =
       error instanceof AuctionServiceError
@@ -71,12 +72,16 @@ async function AuctionDetailContent({ params }: AuctionDetailPageProps) {
     );
   }
 
+  const isActiveAccount = user?.status === "ACTIVA";
+  const ownArticle = user?.roles.includes("COMPRADOR")
+    ? await prisma.article.findFirst({ where: { id: auctionView.article.id, ownerId: user.id }, select: { ownerId: true } }) : null;
+  const restriction = bidRestriction(user, ownArticle?.ownerId);
   const serverNow = new Date();
   const serverNowIso = serverNow.toISOString();
 
   return (
     <>
-      <AuctionLiveRefresh auctionId={id} enabled={isActiveAccount} />
+
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <span className="text-xs font-mono opacity-75">Subasta #{auctionView.id}</span>
@@ -153,15 +158,15 @@ async function AuctionDetailContent({ params }: AuctionDetailPageProps) {
                 <dd className="mt-1 font-semibold">{auctionView.bidCount} pujas</dd>
               </div>
               <div>
-                <dt className="font-semibold opacity-75">Apertura (Ecuador)</dt>
+                <dt className="font-semibold opacity-75">Apertura</dt>
                 <dd className="mt-1 font-mono text-xs">{formatDate(auctionView.opensAt)}</dd>
               </div>
               <div>
-                <dt className="font-semibold opacity-75">Cierre (Ecuador)</dt>
+                <dt className="font-semibold opacity-75">Cierre</dt>
                 <dd className="mt-1 font-mono text-xs">{formatDate(auctionView.closesAt)}</dd>
               </div>
               <div>
-                <dt className="font-semibold opacity-75">Fecha y hora de referencia (Ecuador)</dt>
+                <dt className="font-semibold opacity-75">Fecha y hora de referencia</dt>
                 <dd className="mt-1 font-mono text-xs">{formatDate(serverNowIso)}</dd>
               </div>
               <div>
@@ -186,7 +191,7 @@ async function AuctionDetailContent({ params }: AuctionDetailPageProps) {
                   <span>{auctionView.status === "PROGRAMADA" ? "La subasta abrirá en el horario indicado" : auctionView.status === "SUSPENDIDA" ? "Subasta suspendida por administración" : auctionView.status === "CANCELADA" ? "Subasta cancelada" : "Subasta en curso"}</span>
                 )}
               </div>
-              <Badge variant="neutral">Seudónimo protegido</Badge>
+
             </div>
           </Card>
 
@@ -204,7 +209,7 @@ async function AuctionDetailContent({ params }: AuctionDetailPageProps) {
                 </Link>
               ) : (
                 <Link href="/iniciar-sesion" className="pf-btn-secondary">
-                  Inicia sesión con cuenta activa para chatear
+                  Inicia sesión para chatear
                 </Link>
               )}
             </div>
@@ -214,7 +219,7 @@ async function AuctionDetailContent({ params }: AuctionDetailPageProps) {
         <div className="space-y-6">
           <Card>
             <h2 className="text-lg font-semibold mb-3">Ofertas en vivo</h2>
-            <AuctionBidPanel auctionId={id} />
+            <AuctionBidPanel auctionId={id} restriction={restriction} realtimeEnabled={isActiveAccount} />
           </Card>
         </div>
       </div>

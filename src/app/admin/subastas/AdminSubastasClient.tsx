@@ -151,7 +151,7 @@ export default function AdminSubastasClient({
 
       setFeedback({
         type: "success",
-        text: `Subasta ${created.id} programada correctamente para "${selectedArt.title}". El artículo pasó a estado ASOCIADO_SUBASTA.`,
+        text: `Subasta programada correctamente para "${selectedArt.title}".`,
       });
       router.refresh();
     } catch {
@@ -284,7 +284,7 @@ export default function AdminSubastasClient({
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
           <h2 className="text-lg font-semibold">Programar nueva subasta</h2>
           <span className="text-xs font-mono opacity-75">
-            Hora de referencia (Ecuador): {formatDate(serverNowIso)}
+            Hora de referencia: {formatDate(serverNowIso)}
           </span>
         </div>
 
@@ -346,7 +346,7 @@ export default function AdminSubastasClient({
             />
 
             <TextField
-              label="Apertura (hora de Ecuador)"
+              label="Apertura"
               type="datetime-local"
               name="opensAt"
               value={toLocalDateTime(opensAt)}
@@ -355,7 +355,7 @@ export default function AdminSubastasClient({
             />
 
             <TextField
-              label="Cierre (hora de Ecuador)"
+              label="Cierre"
               type="datetime-local"
               name="closesAt"
               value={toLocalDateTime(closesAt)}
@@ -386,7 +386,7 @@ export default function AdminSubastasClient({
                   <th>Código</th>
                   <th>Lote / Artículo</th>
                   <th>Salida / Incremento</th>
-                  <th>Apertura / Cierre (Ecuador)</th>
+                  <th>Apertura / Cierre</th>
                   <th>Ofertas</th>
                   <th>Estado</th>
                   <th>Operaciones</th>

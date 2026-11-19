@@ -24,8 +24,8 @@ export default function AccountReview({ userId, onClose, onActivated }: { userId
         const response = await fetch(`/api/admin/users/${userId}`, { credentials: "same-origin", cache: "no-store", signal: controller.signal });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error?.message ?? "No se pudo abrir la revisión.");
-        // Las imágenes se muestran aquí. El PDF se consulta únicamente desde su enlace.
-        if (result.data.identity.mimeType.startsWith("image/")) {
+        // Imágenes y PDF se leen por el endpoint protegido y se previsualizan aquí.
+        {
           const file = await fetch(`/api/files/${result.data.identity.id}`, { credentials: "same-origin", cache: "no-store", signal: controller.signal });
           if (!file.ok) {
             const failure = await file.json();
@@ -60,17 +60,16 @@ export default function AccountReview({ userId, onClose, onActivated }: { userId
   }
 
   return <section className="pf-card space-y-4" aria-labelledby="account-review-title">
-    <h2 id="account-review-title" className="text-xl font-bold">Revisión protegida de la cuenta</h2>
-    <p>Comprueba que el nombre y la cédula registrados coincidan con el documento de identidad antes de aprobar la cuenta.</p>
+    <h2 id="account-review-title" className="text-xl font-bold">Revisión de la cuenta</h2>
+
     {loading && <p role="status">Cargando datos y documento…</p>}
     {review && <>
       <dl className="space-y-2"><div><dt className="pf-label">Nombre registrado</dt><dd>{review.user.nombreCompleto}</dd></div><div><dt className="pf-label">Cédula registrada</dt><dd>{review.user.cedula}</dd></div></dl>
       {review.identity.mimeType.startsWith("image/") ?
         // El blob procede exclusivamente del endpoint protegido, sin URL pública ni optimización externa.
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={review.objectUrl} alt="Documento de identidad para revisión" className="max-h-96 w-full object-contain" /> :
-        <p>Documento PDF disponible. Ábrelo en otra pestaña para cotejarlo con los datos registrados.</p>}
-      <a href={review.objectUrl ?? `/api/files/${review.identity.id}`} target="_blank" rel="noopener noreferrer" className="pf-btn-secondary">{review.identity.mimeType === "application/pdf" ? "Abrir PDF en otra pestaña" : "Abrir documento en otra pestaña"}</a>
+        <img src={review.objectUrl} alt="Documento de identidad para revisión" className="max-h-[42rem] w-full object-contain" /> :
+        <object data={review.objectUrl} type="application/pdf" aria-label="Documento de identidad para revisión" className="w-full h-[32rem] border rounded"><p>No se pudo previsualizar el PDF en este navegador. Utiliza un navegador compatible antes de aprobar la cuenta.</p></object>}
       <fieldset disabled={busy} className="space-y-3">
         <label className="flex gap-2"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />He revisado el documento y comprobado su coherencia con los datos registrados.</label>
         <div><label htmlFor="approval-reason" className="pf-label">Motivo de aprobación</label><select id="approval-reason" className="pf-input" value={reason} onChange={(event) => setReason(event.target.value)}><option value="">Selecciona un motivo</option><option value={APPROVAL_REASON}>Datos registrados coherentes con el documento revisado</option></select></div>

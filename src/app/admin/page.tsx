@@ -81,9 +81,7 @@ async function AdminDashboardContent() {
           <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
             Administración de subastas
           </h1>
-          <p className="text-sm mt-1">
-            Indicadores operativos de verificación de lotes, programación comercial y actividad de ofertas.
-          </p>
+
         </div>
         <div className="flex flex-wrap gap-3">
           <Link href="/admin/verificaciones" className="pf-btn">

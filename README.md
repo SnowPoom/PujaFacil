@@ -182,7 +182,7 @@ npm.cmd test
 npm.cmd run build
 ```
 
-La suite configurada en Vitest contiene 364 pruebas unitarias y de integración aislada que validan los servicios de autenticación, artículos, subastas, ofertas concurrentes, chat WebSocket, subidas y auditoría.
+La suite configurada en Vitest contiene 374 pruebas unitarias y de integración aislada que validan los servicios de autenticación, artículos, subastas, ofertas concurrentes, chat WebSocket, subidas y auditoría.
 
 Para ejecutar el build local como producción, define el entorno antes de arrancar el servidor:
 

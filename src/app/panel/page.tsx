@@ -25,9 +25,9 @@ async function Panel() {
     }
   }
   return <Card><section className="space-y-6">
-    <div><h1 className="pf-title ">Mi panel</h1><p className="mt-2">Bienvenido, {user.nombreCompleto}.</p></div>
-    <p><Badge variant={user.status === "ACTIVA" ? "success" : "accent"}>{user.status}</Badge></p>
-    {user.status === "PENDIENTE" && <div role="status"><h2 className="font-semibold">Pendiente de aprobación</h2><p className="mt-2">Un administrador debe revisar tu documento de identidad y activar tu cuenta antes de que puedas publicar, ofertar o chatear.</p></div>}
+    <div><h1 className="pf-title ">Mi panel</h1><p className="mt-2">Hola, {user.nombreCompleto}.</p></div>
+    <p>Estado de cuenta: <Badge variant={user.status === "ACTIVA" ? "success" : "accent"}>{user.status}</Badge></p>
+    {user.status === "PENDIENTE" && <div role="status"><p className="mt-2">Se revisará tu información antes de activar tu cuenta.</p></div>}
     {links.length > 0 && <nav aria-label="Operaciones de mi cuenta" className="flex flex-wrap gap-3">{links.map((link) => <Link key={link.href} href={link.href} className="pf-btn">{link.label}</Link>)}</nav>}
     <Link href="/perfil" className="pf-btn-secondary">Mi perfil</Link>
     {user.status === "ACTIVA" && hasRole(user, "ADMIN_SUBASTAS") && <Link href="/admin/usuarios" className="pf-btn-secondary">Aprobar cuentas</Link>}

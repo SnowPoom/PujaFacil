@@ -1,7 +1,7 @@
 "use client";
 import { formatDate } from "@/lib/presentation";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
@@ -31,7 +31,10 @@ export default function SubastasClient({ initialResult }: { initialResult: Publi
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const initialListing = useRef(true);
   useEffect(() => {
+    if (initialListing.current && page === 1 && query === "" && statusFilter === "TODAS") return;
+    initialListing.current = false;
     let active = true;
     const controller = new AbortController();
 
@@ -229,11 +232,11 @@ export default function SubastasClient({ initialResult }: { initialResult: Publi
                     <dd>{item.bidCount}</dd>
                   </div>
                   <div className="flex justify-between text-xs">
-                    <dt className="opacity-75">Apertura (Ecuador):</dt>
+                    <dt className="opacity-75">Apertura:</dt>
                     <dd className="font-mono">{formatDate(item.opensAt)}</dd>
                   </div>
                   <div className="flex justify-between text-xs">
-                    <dt className="opacity-75">Cierre (Ecuador):</dt>
+                    <dt className="opacity-75">Cierre:</dt>
                     <dd className="font-mono">{formatDate(item.closesAt)}</dd>
                   </div>
                   {item.winnerAlias && (

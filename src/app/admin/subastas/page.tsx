@@ -55,7 +55,7 @@ async function AdminSubastasContent() {
             Programación y supervisión de subastas
           </h1>
           <p className="text-sm mt-1">
-            Configuración comercial de artículos aprobados y control del estado de las subastas.
+            Configuración comercial de artículos aprobados y control del estado de las subastas. Horarios de Ecuador continental (UTC−5).
           </p>
         </div>
         <Link href="/admin" className="pf-btn-secondary">

@@ -110,7 +110,7 @@ async function MisOfertasContent() {
                   <th>Artículo / Lote</th>
                   <th>Tu seudónimo</th>
                   <th>Monto ofertado (USD)</th>
-                  <th>Fecha y hora (Ecuador)</th>
+                  <th>Fecha y hora</th>
                   <th>Estado de subasta</th>
                   <th>Posición de tu oferta</th>
                   <th>Acción</th>

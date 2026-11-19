@@ -2,7 +2,8 @@
 import { formatDate, displayLabel } from "@/lib/presentation";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { io } from "socket.io-client";
+import { io, type Socket } from "socket.io-client";
+import { useRouter } from "next/navigation";
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
@@ -79,7 +80,9 @@ function generateRequestId(): string {
   return `req-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 }
 
-export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
+export default function AuctionBidPanel({ auctionId, restriction, realtimeEnabled }: { auctionId: string; restriction: string | null; realtimeEnabled: boolean }) {
+  const router = useRouter();
+  const [notificationSocket, setNotificationSocket] = useState<Socket | null>(null);
   const [snapshot, setSnapshot] = useState<AuctionBidsState | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -97,27 +100,7 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
   const fetchAuctionSnapshot = useCallback(
     async (updateSuggestedInput = false) => {
       try {
-        // Intentar primero GET /api/auctions/[id] (contrato de Antony) si está disponible,
-        // y complementar/respaldar con GET /api/auctions/[id]/bids (contrato de Kevin).
-        let detailData: Partial<AuctionBidsState> | null = null;
-        try {
-          const detailRes = await fetch(`/api/auctions/${encodeURIComponent(auctionId)}`, {
-            credentials: "same-origin",
-            cache: "no-store",
-          });
-          if (detailRes.ok) {
-            const detailBody = (await detailRes.json()) as {
-              ok?: boolean;
-              data?: Partial<AuctionBidsState>;
-            };
-            if (detailBody?.ok && detailBody.data) {
-              detailData = detailBody.data;
-            }
-          }
-        } catch {
-          // Si /api/auctions/[id] aún no está montado, continuamos con /api/auctions/[id]/bids.
-        }
-
+        // El endpoint de pujas ya devuelve estado, precios, fechas e historial.
         const bidsRes = await fetch(`/api/auctions/${encodeURIComponent(auctionId)}/bids`, {
           credentials: "same-origin",
           cache: "no-store",
@@ -134,11 +117,7 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
           return;
         }
 
-        const merged: AuctionBidsState = {
-          ...bidsBody.data,
-          ...(detailData?.status ? { status: detailData.status } : {}),
-          ...(detailData?.closesAt ? { closesAt: detailData.closesAt } : {}),
-        };
+        const merged = bidsBody.data;
 
         setSnapshot(merged);
         setLoadError(null);
@@ -160,9 +139,11 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
       void fetchAuctionSnapshot(true);
     });
 
+    if (!realtimeEnabled) return;
     const room = "auction:" + auctionId;
     const socket = io({ path: "/socket.io", withCredentials: true });
 
+    queueMicrotask(() => setNotificationSocket(socket));
     socket.on("connect", () => {
       socket.emit("chat:join", { room }, (ack?: { ok?: boolean }) => {
         setRealtimeConnected(Boolean(ack?.ok));
@@ -190,12 +171,13 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
         };
       });
       void fetchAuctionSnapshot(false);
+      router.refresh();
     });
 
     return () => {
       socket.disconnect();
     };
-  }, [auctionId, fetchAuctionSnapshot]);
+  }, [auctionId, fetchAuctionSnapshot, realtimeEnabled, router]);
 
   // Temporizador informativo de cuenta regresiva cada 1 s
   useEffect(() => {
@@ -209,6 +191,7 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
     e.preventDefault();
     setFormError(null);
     setSuccessMsg(null);
+    if (restriction) { setFormError(restriction); return; }
 
     const trimmed = amountInput.trim();
     if (!USD_TWO_DECIMALS.test(trimmed)) {
@@ -227,6 +210,7 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
   };
 
   const handleConfirmBid = async () => {
+    if (restriction) { setFormError(restriction); setConfirmOpen(false); return; }
     const trimmed = amountInput.trim();
     const requestId = currentAttemptRequestIdRef.current ?? generateRequestId();
     currentAttemptRequestIdRef.current = requestId;
@@ -286,7 +270,7 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
       }
 
       setSuccessMsg(
-        `Oferta registrada por $${body.data.amount} USD bajo tu seudónimo ${body.data.alias}.`,
+        `Oferta registrada por $${body.data.amount} USD.`,
       );
       await fetchAuctionSnapshot(true);
     } catch {
@@ -326,10 +310,10 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={isAuctionActive ? "success" : "accent"}>{snapshot.status}</Badge>
           <Badge variant={realtimeConnected ? "success" : "neutral"}>
-            {realtimeConnected ? "Tiempo real activo" : "Sincronizando…"}
+            {realtimeConnected ? "Tiempo real activo" : realtimeEnabled ? "Sincronizando…" : "Vista pública"}
           </Badge>
         </div>
-        <NotificationBellLink className="pf-btn-secondary text-xs" />
+        <NotificationBellLink socket={notificationSocket} className="pf-btn-secondary text-xs" />
       </div>
 
       <dl className="space-y-2 text-sm border rounded-lg p-3" style={{ borderColor: "var(--pf-border)" }}>
@@ -371,6 +355,7 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
         </p>
       )}
 
+      {restriction && <p className="text-sm text-[var(--pf-muted)]" role="status">{restriction}</p>}
       {isAuctionActive ? (
         <form onSubmit={handleOpenConfirm} className="space-y-3" noValidate>
           <TextField
@@ -379,10 +364,10 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
             value={amountInput}
             onChange={(e) => setAmountInput(e.target.value)}
             placeholder={snapshot.minNextBid}
-            disabled={submitting}
+            disabled={submitting || Boolean(restriction)}
             required
           />
-          <Button type="submit" disabled={submitting} className="w-full">
+          <Button type="submit" disabled={submitting || Boolean(restriction)} className="w-full">
             {submitting ? "Registrando oferta…" : "Ofertar"}
           </Button>
         </form>
@@ -394,7 +379,7 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
 
       <div className="pt-3 border-t space-y-2" style={{ borderColor: "var(--pf-border)" }}>
         <h3 className="text-xs font-semibold uppercase tracking-wide opacity-75">
-          Historial reciente de ofertas (seudónimos protegidos)
+          Historial reciente de ofertas
         </h3>
         {snapshot.items.length === 0 ? (
           <p className="text-xs opacity-75">Aún no se han registrado ofertas en esta subasta.</p>
@@ -417,7 +402,7 @@ export default function AuctionBidPanel({ auctionId }: { auctionId: string }) {
       <ConfirmDialog
         open={confirmOpen}
         title="Confirmar oferta en firme"
-        message={`¿Confirmas registrar tu oferta por $${amountInput.trim()} USD por «${snapshot.title}» (subasta #${auctionId})? Si resulta ganadora, implica un compromiso comercial.`}
+        message={`¿Confirmas registrar tu oferta por $${amountInput.trim()} USD por «${snapshot.title}»? Si resulta ganadora, implica un compromiso comercial.`}
         confirmText="Confirmar oferta"
         cancelText="Cancelar"
         loading={submitting}

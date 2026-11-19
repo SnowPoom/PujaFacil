@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRef, useCallback, useEffect, useMemo, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Pagination from "@/components/ui/Pagination";
 import DetailDialog from "@/components/ui/DetailDialog";
@@ -39,7 +39,10 @@ export default function CatalogClient({ initialCatalog }: { initialCatalog: Cata
     return `/api/public/articles?${params.toString()}`;
   }, [query, category, page]);
 
+  const initialListing = useRef(true);
   useEffect(() => {
+    if (initialListing.current && requestKey === "/api/public/articles?q=&category=ALL&page=1&pageSize=8" && retry === 0) return;
+    initialListing.current = false;
     const controller = new AbortController();
     fetch(requestKey, { signal: controller.signal })
       .then(async (response) => {
@@ -65,9 +68,9 @@ export default function CatalogClient({ initialCatalog }: { initialCatalog: Cata
     <main className="pf-page">
       <header className="mb-8 flex flex-col gap-5 border-b border-[var(--pf-border)] pb-7 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="mb-2 text-sm font-semibold uppercase tracking-[0.16em] text-[var(--pf-primary)]">PujaFácil · Subastas privadas</p>
+
           <h1 className="pf-title ">Catálogo de artículos</h1>
-          <p className="mt-3 max-w-2xl text-[var(--pf-text)]/75">Explora piezas aprobadas y consulta las subastas disponibles.</p>
+          <p className="mt-3 max-w-2xl text-[var(--pf-text)]/75">Explora piezas y consulta las subastas disponibles.</p>
         </div>
         <nav className="flex flex-wrap gap-3" aria-label="Accesos rápidos">
           <Link href="/subastas" className="pf-btn-secondary">Subastas</Link>

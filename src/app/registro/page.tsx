@@ -9,7 +9,7 @@ export default function RegisterPage() {
       <Link href="/" className="text-sm font-semibold">PujaFácil</Link>
       <div><h1 id="register-title" className="pf-title ">Crear una cuenta</h1><p className="mt-2 text-sm">Regístrate para participar en subastas o publicar tus artículos.</p></div>
       <RegisterForm />
-      <p id="register-help" className="text-sm">La cuenta se creará pendiente de aprobación y solicitará únicamente perfiles de comprador o vendedor.</p>
+      <p id="register-help" className="text-sm">Tu cuenta quedará pendiente de aprobación. Puedes solicitar el perfil de comprador, vendedor o ambos.</p>
       <Link href="/iniciar-sesion" className="pf-btn-secondary">Volver a iniciar sesión</Link>
     </section>
     </Card>

@@ -46,9 +46,7 @@ async function AdminVerificacionesContent() {
           <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
             Asignación de Verificaciones
           </h1>
-          <p className="text-sm mt-1">
-            Asigna los artículos recibidos a verificadores activos para su revisión documental.
-          </p>
+
         </div>
         <Link href="/admin" className="pf-btn-secondary">
           ← Volver a Administración

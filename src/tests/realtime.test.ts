@@ -135,22 +135,22 @@ describe("Kevin 14/11 — Etapa 2: servicio de chat (chat-service.ts)", () => {
     await expect(validateRoomAccess("auction:adj1", "write")).rejects.toMatchObject({ status: 409, code: "SALA_SOLO_LECTURA" });
   });
 
-  it("getOrCreateAuctionAlias reutiliza alias existente o genera uno nuevo con formato Postor-xxxxxx", async () => {
-    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Postor-a1b2c3" });
-    await expect(getOrCreateAuctionAlias("sub1", "u1")).resolves.toBe("Postor-a1b2c3");
+  it("getOrCreateAuctionAlias reutiliza alias existente o genera uno nuevo con formato Usuario-xxxxxx", async () => {
+    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Usuario-a1b2c3" });
+    await expect(getOrCreateAuctionAlias("sub1", "u1")).resolves.toBe("Usuario-a1b2c3");
     expect(db.auctionAlias.create).not.toHaveBeenCalled();
 
     db.auctionAlias.findUnique.mockResolvedValueOnce(null);
     db.auctionAlias.create.mockImplementationOnce(async ({ data }: { data: { alias: string } }) => ({ alias: data.alias }));
     const createdAlias = await getOrCreateAuctionAlias("sub1", "u2");
-    expect(createdAlias).toMatch(/^Postor-[a-f0-9]{6}$/);
+    expect(createdAlias).toMatch(/^Usuario-[a-f0-9]{6}$/);
 
     // Manejo de colisión P2002 concurrente
     db.auctionAlias.findUnique.mockResolvedValueOnce(null);
     const p2002 = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "6.19.0" });
     db.auctionAlias.create.mockRejectedValueOnce(p2002);
-    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Postor-raced0" });
-    await expect(getOrCreateAuctionAlias("sub1", "u3")).resolves.toBe("Postor-raced0");
+    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Usuario-raced0" });
+    await expect(getOrCreateAuctionAlias("sub1", "u3")).resolves.toBe("Usuario-raced0");
   });
 
   it("saveMessage sanitiza, persiste y oculta authorId tanto en general como en subasta", async () => {
@@ -173,7 +173,7 @@ describe("Kevin 14/11 — Etapa 2: servicio de chat (chat-service.ts)", () => {
     expect(Object.keys(msgGeneral)).not.toContain("authorId");
 
     db.auction.findUnique.mockResolvedValueOnce({ status: "ACTIVA" });
-    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Postor-ff0011" });
+    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Usuario-ff0011" });
     db.chatMessage.create.mockResolvedValueOnce({
       id: "msg2",
       room: "auction:sub1",
@@ -182,7 +182,7 @@ describe("Kevin 14/11 — Etapa 2: servicio de chat (chat-service.ts)", () => {
     });
 
     const msgAuction = await saveMessage({ room: "auction:sub1", authorId: "u1", text: "Oferta lista" });
-    expect(msgAuction.authorAlias).toBe("Postor-ff0011");
+    expect(msgAuction.authorAlias).toBe("Usuario-ff0011");
 
     await expect(saveMessage({ room: "general", authorId: "u1", text: "<script></script>" })).rejects.toBeInstanceOf(ChatError);
   });
@@ -197,14 +197,14 @@ describe("Kevin 14/11 — Etapa 2: servicio de chat (chat-service.ts)", () => {
       { id: "m1", room: "auction:sub1", text: "Primero", createdAt: t1, authorId: "u1" },
     ]);
     db.auctionAlias.findMany.mockResolvedValueOnce([
-      { userId: "u1", alias: "Postor-111111" },
-      { userId: "u2", alias: "Postor-222222" },
+      { userId: "u1", alias: "Usuario-111111" },
+      { userId: "u2", alias: "Usuario-222222" },
     ]);
 
     const history = await getHistory("auction:sub1", 30);
     expect(history).toEqual([
-      { id: "m1", room: "auction:sub1", text: "Primero", authorAlias: "Postor-111111", createdAt: t1.toISOString() },
-      { id: "m2", room: "auction:sub1", text: "Segundo", authorAlias: "Postor-222222", createdAt: t2.toISOString() },
+      { id: "m1", room: "auction:sub1", text: "Primero", authorAlias: "Usuario-111111", createdAt: t1.toISOString() },
+      { id: "m2", room: "auction:sub1", text: "Segundo", authorAlias: "Usuario-222222", createdAt: t2.toISOString() },
     ]);
   });
 });
@@ -397,7 +397,7 @@ describe("Kevin 14/11 — Etapa 5: chat:send (persistencia antes de emitir y aut
 
     db.user.findUnique.mockResolvedValue({ status: "ACTIVA", roles: [{ role: "COMPRADOR" }] });
     db.auction.findUnique.mockResolvedValueOnce({ status: "ACTIVA" });
-    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Postor-cafe01" });
+    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Usuario-cafe01" });
     db.chatMessage.create.mockImplementationOnce(async () => {
       callOrder.push("db:create");
       return { id: "msg-100", room: "auction:sub-activa", text: `Hola ${HIDDEN_DATA}`, createdAt: now };
@@ -427,7 +427,7 @@ describe("Kevin 14/11 — Etapa 5: chat:send (persistencia antes de emitir y aut
       id: "msg-100",
       room: "auction:sub-activa",
       text: `Hola ${HIDDEN_DATA}`,
-      authorAlias: "Postor-cafe01",
+      authorAlias: "Usuario-cafe01",
       createdAt: now.toISOString(),
     };
     expect(emitFn).toHaveBeenCalledWith("chat:new", expectedDto);
@@ -562,7 +562,7 @@ describe("Kevin 14/11 — Etapa 6: GET /api/chat/messages", () => {
     ]);
     db.auctionAlias.findMany.mockResolvedValueOnce([
       { userId: "u1", alias: "Pujador-Alfa" },
-      { userId: "u2", alias: "Postor-bb2233" },
+      { userId: "u2", alias: "Usuario-bb2233" },
     ]);
 
     const res = await getChatMessages(
@@ -588,7 +588,7 @@ describe("Kevin 14/11 — Etapa 6: GET /api/chat/messages", () => {
             id: "m2",
             room: "auction:demo-subasta-programada",
             text: "Segundo",
-            authorAlias: "Postor-bb2233",
+            authorAlias: "Usuario-bb2233",
             createdAt: t2.toISOString(),
           },
         ],
@@ -668,7 +668,7 @@ describe("Kevin 15/11 — Etapa 2: Servicio transaccional de ofertas (bid-servic
     db.article.findUnique.mockResolvedValueOnce({ ownerId: "vendedor-1" });
     db.bid.findUnique.mockResolvedValueOnce(null);
     db.bid.findFirst.mockResolvedValueOnce({ id: "b-prev", amount: new Prisma.Decimal("150.00"), buyerId: "buyer-prev" });
-    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Postor-aa1122" });
+    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Usuario-aa1122" });
     const acceptedAt = new Date("2026-11-15T18:00:00.000Z");
     db.bid.create.mockResolvedValueOnce({
       id: "bid-new",
@@ -690,7 +690,7 @@ describe("Kevin 15/11 — Etapa 2: Servicio transaccional de ofertas (bid-servic
       amount: "160.00",
       auctionId: "sub-1",
       acceptedAt: acceptedAt.toISOString(),
-      alias: "Postor-aa1122",
+      alias: "Usuario-aa1122",
       idempotent: false,
     });
     expect(emitFn).toHaveBeenCalledWith(
@@ -772,7 +772,7 @@ describe("Kevin 15/11 — Etapa 2: Servicio transaccional de ofertas (bid-servic
       amount: new Prisma.Decimal("160.00"),
       acceptedAt: existingDate,
     });
-    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Postor-idem01" });
+    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Usuario-idem01" });
     db.bid.findFirst.mockResolvedValueOnce({ amount: new Prisma.Decimal("160.00") });
     db.bid.count.mockResolvedValueOnce(1);
 
@@ -785,7 +785,7 @@ describe("Kevin 15/11 — Etapa 2: Servicio transaccional de ofertas (bid-servic
     expect(idemRes).toMatchObject({
       id: "bid-existing",
       amount: "160.00",
-      alias: "Postor-idem01",
+      alias: "Usuario-idem01",
       idempotent: true,
     });
     expect(db.bid.create).not.toHaveBeenCalled();
@@ -817,7 +817,7 @@ describe("Kevin 15/11 — Etapa 2: Servicio transaccional de ofertas (bid-servic
     db.article.findUnique.mockResolvedValue({ ownerId: "vendedor-1" });
     db.bid.findUnique.mockResolvedValue(null);
     db.bid.findFirst.mockImplementation(async () => highestInDb);
-    db.auctionAlias.findUnique.mockResolvedValue({ alias: "Postor-conc01" });
+    db.auctionAlias.findUnique.mockResolvedValue({ alias: "Usuario-conc01" });
     db.bid.create.mockImplementation(async ({ data }: { data: { buyerId: string; amount: string } }) => {
       const created = {
         id: `bid-${data.buyerId}`,
@@ -864,7 +864,7 @@ describe("Kevin 15/11 — Etapa 2: Servicio transaccional de ofertas (bid-servic
     db.bid.findMany.mockResolvedValueOnce([
       { buyerId: "u1", amount: new Prisma.Decimal("160.00"), acceptedAt: bidDate },
     ]);
-    db.auctionAlias.findMany.mockResolvedValueOnce([{ userId: "u1", alias: "Postor-112233" }]);
+    db.auctionAlias.findMany.mockResolvedValueOnce([{ userId: "u1", alias: "Usuario-112233" }]);
 
     const snapshot = await getAuctionBids("sub-1");
     expect(snapshot).toMatchObject({
@@ -872,7 +872,7 @@ describe("Kevin 15/11 — Etapa 2: Servicio transaccional de ofertas (bid-servic
       highestBid: "160.00",
       minNextBid: "170.00",
       bidCount: 1,
-      items: [{ alias: "Postor-112233", amount: "160.00", acceptedAt: bidDate.toISOString() }],
+      items: [{ alias: "Usuario-112233", amount: "160.00", acceptedAt: bidDate.toISOString() }],
     });
     expect(Object.keys(snapshot.items[0])).toEqual(["alias", "amount", "acceptedAt"]);
 
@@ -888,7 +888,7 @@ describe("Kevin 15/11 — Etapa 2: Servicio transaccional de ofertas (bid-servic
           winnerBidId: null,
           article: { title: "Reloj Suizo" },
           bids: [{ id: "b1" }],
-          aliases: [{ alias: "Postor-112233" }],
+          aliases: [{ alias: "Usuario-112233" }],
         },
       },
     ]);
@@ -903,7 +903,7 @@ describe("Kevin 15/11 — Etapa 2: Servicio transaccional de ofertas (bid-servic
         amount: "160.00",
         acceptedAt: bidDate.toISOString(),
         closesAt: closesAt.toISOString(),
-        alias: "Postor-112233",
+        alias: "Usuario-112233",
         isLeadingOrWinner: true,
       },
     ]);
@@ -1231,7 +1231,7 @@ describe("Kevin 16/11 — Etapa 2: Aviso al líder superado en placeBid", () => 
       amount: new Prisma.Decimal("150.00"),
       buyerId: "buyer-anterior",
     });
-    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Postor-nuevo9" });
+    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Usuario-nuevo9" });
     const acceptedAt = new Date("2026-11-16T14:00:00.000Z");
     db.bid.create.mockResolvedValueOnce({
       id: "bid-new",
@@ -1279,7 +1279,7 @@ describe("Kevin 16/11 — Etapa 2: Aviso al líder superado en placeBid", () => 
       amount: new Prisma.Decimal("150.00"),
       buyerId: "buyer-1",
     });
-    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Postor-self01" });
+    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Usuario-self01" });
     db.bid.create.mockResolvedValueOnce({
       id: "bid-self-2",
       amount: new Prisma.Decimal("160.00"),
@@ -1304,7 +1304,7 @@ describe("Kevin 16/11 — Etapa 2: Aviso al líder superado en placeBid", () => 
       amount: new Prisma.Decimal("160.00"),
       acceptedAt: new Date(),
     });
-    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Postor-self01" });
+    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Usuario-self01" });
     db.bid.findFirst.mockResolvedValueOnce({ amount: new Prisma.Decimal("160.00") });
     db.bid.count.mockResolvedValueOnce(2);
 
@@ -1826,7 +1826,7 @@ describe("Kevin 17/11 — Verificación final: 5 casos negativos obligatorios de
     db.article.findUnique.mockResolvedValue({ ownerId: "vendedor-ajeno", title: "Lote Disputado" });
     db.bid.findUnique.mockResolvedValue(null);
     db.bid.findFirst.mockImplementation(async () => highestInDb);
-    db.auctionAlias.findUnique.mockResolvedValue({ alias: "Postor-disp17" });
+    db.auctionAlias.findUnique.mockResolvedValue({ alias: "Usuario-disp17" });
     db.bid.create.mockImplementation(async ({ data }: { data: { buyerId: string; amount: string } }) => {
       const created = {
         id: `bid-${data.buyerId}`,
@@ -1916,3 +1916,26 @@ describe("Kevin 17/11 — Verificación final: 5 casos negativos obligatorios de
   });
 });
 
+
+
+describe("Alias visibles y vendedor de la sala", () => {
+  it("presenta alias antiguos como Usuario sin reescribir el registro", async () => {
+    db.auctionAlias.findUnique.mockResolvedValueOnce({ alias: "Postor-a1b2c3" });
+    await expect(getOrCreateAuctionAlias("sub1", "u1")).resolves.toBe("Usuario-a1b2c3");
+    expect(db.auctionAlias.create).not.toHaveBeenCalled();
+  });
+  it("marca al propietario en mensajes nuevos y en el historial de su subasta", async () => {
+    const now = new Date();
+    db.auction.findUnique.mockResolvedValue({ status: "ACTIVA", article: { ownerId: "vendedor" } });
+    db.auctionAlias.findUnique.mockResolvedValue({ alias: "Postor-abc123" });
+    db.chatMessage.create.mockResolvedValue({ id: "m1", room: "auction:sub1", text: "Incluye estuche", createdAt: now });
+    const sent = await saveMessage({ room: "auction:sub1", authorId: "vendedor", text: "Incluye estuche" });
+    expect(sent.authorAlias).toBe("Usuario-abc123 (Vendedor)");
+    db.chatMessage.findMany.mockResolvedValue([{ id: "m1", room: "auction:sub1", text: "Incluye estuche", createdAt: now, authorId: "vendedor" }, { id: "m2", room: "auction:sub1", text: "Gracias", createdAt: now, authorId: "comprador" }]);
+    db.auctionAlias.findMany.mockResolvedValue([{ userId: "vendedor", alias: "Postor-abc123" }, { userId: "comprador", alias: "Usuario-def456" }]);
+    const history = await getHistory("auction:sub1", 30);
+    expect(history.find(m => m.id === "m1")?.authorAlias).toBe(sent.authorAlias);
+    expect(history.find(m => m.id === "m2")?.authorAlias).toBe("Usuario-def456");
+    for (const message of history) { expect(message).not.toHaveProperty("authorId"); expect(message).not.toHaveProperty("sellerId"); }
+  });
+});

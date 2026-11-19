@@ -1,4 +1,4 @@
-import { assertTrustedOrigin, requireActive, requireRole } from "@/lib/auth/guards";
+import { assertTrustedOrigin, requireRole } from "@/lib/auth/guards";
 import { authErrorResponse, readJson } from "@/lib/auth/http";
 import { BidError, getAuctionBids, placeBid, placeBidSchema } from "@/modules/bids/bid-service";
 
@@ -47,7 +47,7 @@ export async function GET(_request: Request, context: AuctionBidsRouteContext): 
 export async function POST(request: Request, context: AuctionBidsRouteContext): Promise<Response> {
   try {
     assertTrustedOrigin(request);
-    await requireActive(request);
+    // requireRole ya valida sesión y cuenta activa, sin repetir la consulta.
     const user = await requireRole(request, ["COMPRADOR"]);
 
     const { id: auctionId } = await context.params;

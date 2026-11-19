@@ -1,3 +1,4 @@
+import { displayAlias } from "@/lib/aliases";
 import { Prisma, type AuctionStatus } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -13,7 +14,7 @@ import {
 } from "./auction-schema";
 
 const SAFE_ID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
-const FALLBACK_WINNER_ALIAS = "Postor";
+const FALLBACK_WINNER_ALIAS = "Usuario";
 
 export const PUBLIC_AUCTION_STATUSES: readonly AuctionStatus[] = [
   "PROGRAMADA",
@@ -217,7 +218,7 @@ function resolveWinnerAlias(params: {
 
   const aliasMap = new Map<string, string>();
   for (const item of aliases) {
-    aliasMap.set(item.userId, item.alias);
+    aliasMap.set(item.userId, displayAlias(item.alias));
   }
 
   const winningBid =

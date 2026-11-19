@@ -500,7 +500,7 @@ function EditarArticuloContent() {
           {/* Banner de estado no editable */}
           <div className="pf-card bg-[var(--pf-warning-bg)] border-[var(--pf-warning-border)] mb-6 py-3">
             <p className="text-sm text-[var(--pf-warning-text)] my-0 font-medium">
-              ℹ️ Este artículo se encuentra en estado <strong>{currentStatusMeta.label}</strong>{" "}
+              Este artículo se encuentra en estado <strong>{currentStatusMeta.label}</strong>{" "}
               y no admite modificaciones en este momento.
             </p>
           </div>
@@ -626,7 +626,7 @@ function EditarArticuloContent() {
           {article.status === "REQUIERE_CORRECCIONES" && (
             <div className="pf-card bg-[var(--pf-warning-bg)] border-[var(--pf-warning-border)] py-3">
               <p className="text-sm text-[var(--pf-warning-text)] my-0 font-medium">
-                ⚠️ Este artículo requiere correcciones antes de ser aprobado. Revisa los datos,
+                Este artículo requiere correcciones antes de ser aprobado. Revisa los datos,
                 actualiza la información o fotografías necesarias y vuelve a enviarlo a revisión.
               </p>
             </div>
@@ -844,7 +844,7 @@ function EditarArticuloContent() {
               ) : (
                 <div className="border border-dashed border-[var(--pf-warning-border)] bg-[var(--pf-warning-bg)] rounded-lg p-4 mb-4 text-center">
                   <p className="text-xs text-[var(--pf-warning-text)] font-medium">
-                    ⚠️ Aún no has subido ninguna fotografía. Debes subir al menos una foto para poder enviar el artículo a verificación.
+                    Aún no has subido ninguna fotografía. Debes subir al menos una foto para poder enviar el artículo a verificación.
                   </p>
                 </div>
               )}

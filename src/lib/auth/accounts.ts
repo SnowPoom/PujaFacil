@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 export const usersQuerySchema = z.object({
@@ -9,7 +10,10 @@ export const usersQuerySchema = z.object({
 
 export async function listAccounts(input: z.input<typeof usersQuerySchema>) {
   const { page, pageSize, status } = usersQuerySchema.parse(input);
-  const where = { status: status ? { equals: status } : { in: ["PENDIENTE", "ACTIVA"] as ("PENDIENTE" | "ACTIVA")[] } };
+  const where: Prisma.UserWhereInput = {
+    status: status ? { equals: status } : { in: ["PENDIENTE", "ACTIVA"] },
+    roles: { some: { role: { in: ["COMPRADOR", "VENDEDOR"] } }, none: { role: { in: ["ADMIN_SUBASTAS", "VERIFICADOR", "AUDITOR"] } } },
+  };
   const [users, total] = await prisma.$transaction([
     prisma.user.findMany({ where, skip: (page - 1) * pageSize, take: pageSize,
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],

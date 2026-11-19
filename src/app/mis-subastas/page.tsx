@@ -100,7 +100,7 @@ async function MisSubastasContent() {
                   <th>Oferta Máxima</th>
                   <th>Ofertas</th>
                   <th>Estado</th>
-                  <th>Cierre (Ecuador)</th>
+                  <th>Cierre</th>
                   <th>Adjudicación</th>
                   <th>Ficha</th>
                 </tr>

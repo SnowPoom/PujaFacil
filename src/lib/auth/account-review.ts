@@ -5,6 +5,7 @@ import { auditReasonSchema, sanitizeAuditDetail, writeAuditEvent, type AuditReas
 import { decryptCedula } from "@/lib/auth/crypto";
 import { authErrorResponse } from "@/lib/auth/http";
 import { activationSchema as clientActivationSchema, APPROVAL_REASON } from "@/lib/auth/schemas";
+import { hasCommercialRoles } from "@/lib/auth/roles";
 
 // Usar el catálogo de Jonathan solo en servidor: audit.ts no entra en el bundle del cliente.
 export const activationSchema = clientActivationSchema.extend({
@@ -22,14 +23,14 @@ export function accountReviewErrorResponse(error: unknown): Response {
   return authErrorResponse(error);
 }
 const reviewSelect = {
-  id: true, status: true, updatedAt: true,
+  id: true, status: true, updatedAt: true, roles: { select: { role: true } },
   files: { where: { kind: "IDENTIDAD" as const }, orderBy: [{ createdAt: "desc" as const }, { id: "desc" as const }], take: 1,
     select: { id: true, mimeType: true } },
 } satisfies Prisma.UserSelect;
 
 export async function openAccountReview(actorId: string, userId: string) {
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { ...reviewSelect, nombreCompleto: true, cedulaCifrada: true } });
-  if (!user || user.status !== "PENDIENTE") throw new AccountReviewError(404, "CUENTA_NO_DISPONIBLE", "Solo se pueden revisar cuentas pendientes.");
+  if (!user || user.status !== "PENDIENTE" || !hasCommercialRoles(user.roles.map(({ role }) => role))) throw new AccountReviewError(404, "CUENTA_NO_DISPONIBLE", "Solo se pueden revisar cuentas comerciales pendientes.");
   const identity = user.files[0];
   if (!identity) throw new AccountReviewError(409, "IDENTIDAD_PENDIENTE", "La cuenta no tiene un documento de identidad cargado.");
   const cedula = decryptCedula(user.cedulaCifrada);
@@ -44,7 +45,7 @@ export async function activateReviewedAccount(actorId: string, userId: string, i
     await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
     const user = await tx.user.findUnique({ where: { id: userId }, select: reviewSelect });
     const identity = user?.files[0];
-    if (!user || user.status !== "PENDIENTE" || !identity) throw new AccountReviewError(409, "ACTIVACION_NO_PERMITIDA", "La cuenta debe estar pendiente y tener un documento de identidad cargado.");
+    if (!user || user.status !== "PENDIENTE" || !identity || !hasCommercialRoles(user.roles.map(({ role }) => role))) throw new AccountReviewError(409, "ACTIVACION_NO_PERMITIDA", "La cuenta debe ser comercial, estar pendiente y tener un documento de identidad cargado.");
     if (identity.id !== input.documentoRevisadoId) throw new AccountReviewError(409, "DOCUMENTO_NO_CORRESPONDE", "El documento revisado no corresponde a esta cuenta pendiente.");
     const review = await tx.auditEvent.findFirst({ where: { id: input.reviewId, actorId, action: "CUENTA_DATOS_CONSULTADOS",
       resourceType: "FileRecord", resourceId: identity.id, result: "EXITO", createdAt: { gte: new Date(Date.now() - REVIEW_LIFETIME_MS) } } });
