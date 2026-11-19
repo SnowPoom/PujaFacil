@@ -182,7 +182,6 @@ npm.cmd test
 npm.cmd run build
 ```
 
-La suite configurada en Vitest contiene 364 pruebas unitarias y de integración aislada que validan los servicios de autenticación, artículos, subastas, ofertas concurrentes, chat WebSocket, subidas y auditoría.
 
 Para ejecutar el build local como producción, define el entorno antes de arrancar el servidor:
 
@@ -192,10 +191,6 @@ npm.cmd run start
 ```
 
 En una nueva terminal de desarrollo, usa `npm.cmd run dev` sin esa variable de producción.
-
-Verificación ejecutada para J2 (15 de noviembre): lint correcto, 152 pruebas aprobadas y build de producción correcto tanto localmente como dentro de Docker. Se ejecutó el seed dos veces sobre PostgreSQL y se verificaron las siete cuentas, hashes bcrypt, descifrado de cédulas ficticias y ausencia de duplicados. Una prueba de integración en el contenedor comprobó subidas, eliminación de EXIF, permisos, borrado protegido y auditoría con la base real; también comprobó HTTPS y conexión Socket.IO con transporte WebSocket seguro en el mismo servidor. Esa comprobación de WSS valida el transporte, no los futuros handlers del chat.
-
-Verificación de la actualización de identidad v2 (15 de noviembre), después de integrar `origin/main` hasta `c374c55`: lint y build local correctos; 112 pruebas de infraestructura y 253 pruebas totales aprobadas. Las nuevas comprobaciones de permisos, consultas y fallos de auditoría usan Prisma y disco simulados. Esta actualización no añade una nueva verificación con PostgreSQL/Docker ni valida el flujo de activación pendiente de Christian.
 
 ---
 
@@ -273,7 +268,6 @@ Las cookies de producción llevan `Secure`: utiliza HTTPS para iniciar sesión e
 
 ## 11. Documentación y Diagramas
 
-- **Guía para la exposición:** [Word](docs/guia-exposicion.docx) · [Texto consultable](docs/guia-exposicion.md), con recorrido de quince minutos, ensayo ampliado y cobertura de requisitos.
 - **Modelo de Datos y Entidades:** Detalle de tablas, tipos y relaciones en [`docs/modelo-datos.md`](docs/modelo-datos.md).
 - **Esquema Prisma:** Definición completa en [`prisma/schema.prisma`](prisma/schema.prisma).
 - **Arquitectura:** [PNG](docs/arquitectura-monolito.png) · [SVG editable](docs/arquitectura-monolito.svg).
