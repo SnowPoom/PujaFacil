@@ -31,8 +31,12 @@ export function canAccessResource(user: SessionUser | null, ownerId: string): bo
 }
 export function assertTrustedOrigin(request: Request): void {
   const origin = request.headers.get("origin");
-  const expected = new URL(request.url).origin;
-  if (origin !== expected || request.headers.get("sec-fetch-site") === "cross-site") {
+  const expected = new URL(request.url);
+  // El servidor Next propio normaliza request.url a su hostname configurado.
+  // Host conserva el origen real del navegador (localhost o 127.0.0.1).
+  const host = request.headers.get("host");
+  if (host) expected.host = host;
+  if (origin !== expected.origin || request.headers.get("sec-fetch-site") === "cross-site") {
     throw new AuthError(403, "ORIGEN_NO_PERMITIDO", "El origen de la solicitud no está permitido.");
   }
 }

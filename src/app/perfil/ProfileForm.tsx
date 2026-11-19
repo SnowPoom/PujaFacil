@@ -22,8 +22,8 @@ export default function ProfileForm({ telefono, direccion }: { telefono: string 
     finally { setBusy(false); }
   }
   return <form onSubmit={submit} className="space-y-4"><fieldset disabled={busy} className="space-y-4">
-    <div><label htmlFor="telefono" className="pf-label">Teléfono ficticio</label><input id="telefono" name="telefono" type="tel" autoComplete="tel" defaultValue={telefono ?? ""} maxLength={25} className="pf-input" /></div>
-    <div><label htmlFor="direccion" className="pf-label">Dirección ficticia</label><input id="direccion" name="direccion" autoComplete="street-address" defaultValue={direccion ?? ""} maxLength={250} className="pf-input" /></div>
+    <div><label htmlFor="telefono" className="pf-label">Teléfono</label><input id="telefono" name="telefono" type="tel" autoComplete="tel" defaultValue={telefono ?? ""} maxLength={25} className="pf-input" /></div>
+    <div><label htmlFor="direccion" className="pf-label">Dirección</label><input id="direccion" name="direccion" autoComplete="street-address" defaultValue={direccion ?? ""} maxLength={250} className="pf-input" /></div>
     <Button type="submit" disabled={busy}>{busy ? "Guardando…" : "Guardar perfil"}</Button>
   </fieldset>{error && <p role="alert" className="pf-error">{error}</p>}{saved && <p role="status" className="pf-success">Perfil actualizado.</p>}</form>;
 }

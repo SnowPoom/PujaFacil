@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { DISPLAY_LABELS, displayLabel, statusTone } from "@/lib/presentation";
 
 type BadgeVariant = "neutral" | "success" | "error" | "accent";
 
@@ -22,9 +23,11 @@ export default function Badge({
   variant = "neutral",
   className = "",
 }: BadgeProps) {
+  const code = typeof children === "string" ? children : "";
+  const tone = statusTone(code) ?? variant;
   return (
-    <span className={`${variantClassMap[variant]} ${className}`.trim()}>
-      {children}
+    <span className={`${variantClassMap[tone]} ${className}`.trim()}>
+      {code in DISPLAY_LABELS ? displayLabel(code) : children}
     </span>
   );
 }

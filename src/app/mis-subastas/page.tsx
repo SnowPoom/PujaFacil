@@ -1,3 +1,4 @@
+import { formatDate } from "@/lib/presentation";
 import { Suspense } from "react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
@@ -41,14 +42,14 @@ async function MisSubastasContent() {
     return (
       <Card>
         <div className="space-y-4">
-          <h1 className="text-2xl font-bold" style={{ color: "var(--pf-primary)" }}>
+          <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
             Acceso restringido
           </h1>
           <p role="alert" className="pf-error">
             Necesitas una cuenta activa con rol VENDEDOR para consultar el seguimiento comercial de tus subastas.
           </p>
           <Link href="/panel" className="pf-btn-secondary inline-block">
-            Volver a mi panel
+            Volver al panel
           </Link>
         </div>
       </Card>
@@ -61,8 +62,8 @@ async function MisSubastasContent() {
     <>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: "var(--pf-primary)" }}>
-            Mis Subastas
+          <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
+            Mis subastas
           </h1>
           <p className="text-sm mt-1">
             Seguimiento comercial de las subastas asociadas a tus artículos aprobados. Los postores se muestran mediante seudónimo reservado.
@@ -99,7 +100,7 @@ async function MisSubastasContent() {
                   <th>Oferta Máxima</th>
                   <th>Ofertas</th>
                   <th>Estado</th>
-                  <th>Cierre Oficial</th>
+                  <th>Cierre (Ecuador)</th>
                   <th>Adjudicación</th>
                   <th>Ficha</th>
                 </tr>
@@ -120,14 +121,14 @@ async function MisSubastasContent() {
                     <td>
                       <Badge variant={statusVariant(item.status)}>{item.status}</Badge>
                     </td>
-                    <td className="font-mono text-xs">{item.closesAt}</td>
+                    <td className="font-mono text-xs">{formatDate(item.closesAt)}</td>
                     <td className="text-xs">
                       {item.status === "ADJUDICADA" && item.winnerAlias ? (
                         <span className="font-mono">Ganador: {item.winnerAlias}</span>
                       ) : item.status === "CERRADA_SIN_OFERTAS" ? (
                         <span className="opacity-70">Sin ofertas</span>
                       ) : (
-                        <span className="opacity-70">En curso</span>
+                        <span className="opacity-70">{item.status === "PROGRAMADA" ? "Próxima apertura" : item.status === "SUSPENDIDA" ? "Suspendida" : item.status === "CANCELADA" ? "Cancelada" : "En curso"}</span>
                       )}
                     </td>
                     <td>

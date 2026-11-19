@@ -134,11 +134,21 @@ describe("Christian C1 — recuperación, perfil y activación", () => {
     expect(await existing.json()).toEqual(await absent.json());
     expect(db.passwordReset.create).toHaveBeenCalledOnce();
   });
-  it("no imprime tokens en producción", async () => {
+  it("no imprime tokens en producción sin entrega por consola explícita", async () => {
+    vi.stubEnv("PASSWORD_RESET_DELIVERY", "");
     vi.stubEnv("NODE_ENV", "production");
     const logger = vi.spyOn(console, "log").mockImplementation(() => {});
     expect((await forgot(mutation("/api/auth/forgot-password", { email: user.email }))).status).toBe(200);
     expect(logger).not.toHaveBeenCalled();
+  });
+  it("permite la entrega por consola configurada para la demostración local en producción", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("PASSWORD_RESET_DELIVERY", "console");
+    db.user.findUnique.mockResolvedValue({ id: user.id });
+    db.passwordReset.create.mockResolvedValue({});
+    const logger = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect((await forgot(mutation("/api/auth/forgot-password", { email: user.email }))).status).toBe(200);
+    expect(logger).toHaveBeenCalledWith(expect.stringContaining("/restablecer-clave?token="));
   });
   it.each([null, { ...resetRecord(), usedAt: new Date() }, { ...resetRecord(), expiresAt: new Date(0) }])("rechaza token inexistente, usado o caducado: %j", async (record) => {
     db.passwordReset.findUnique.mockResolvedValue(record);
@@ -391,6 +401,11 @@ describe("Christian C0 — autenticación", () => {
     expect(() => assertTrustedOrigin(make())).toThrow();
     expect(() => assertTrustedOrigin(make("https://otro.test"))).toThrow();
     expect(() => assertTrustedOrigin(make("http://localhost:3000"))).not.toThrow();
+  });
+  it("valida el Host real del navegador cuando Next normaliza la URL interna", () => {
+    const headers = { host: "127.0.0.1:3000", origin: "http://127.0.0.1:3000" };
+    expect(() => assertTrustedOrigin(new Request("http://localhost:3000/api/auth/login", { method: "POST", headers }))).not.toThrow();
+    expect(() => assertTrustedOrigin(new Request("http://localhost:3000/api/auth/login", { method: "POST", headers: { ...headers, origin: "https://otro.test" } }))).toThrow();
   });
   it("configura cookie segura y revoca sesión por hash", async () => {
     vi.stubEnv("NODE_ENV", "production");

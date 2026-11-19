@@ -1,3 +1,4 @@
+import { formatDate } from "@/lib/presentation";
 import { Suspense } from "react";
 import Link from "next/link";
 import type { AuctionStatus } from "@prisma/client";
@@ -53,13 +54,13 @@ async function MisOfertasContent() {
   if (user.status !== "ACTIVA" || !hasRole(user, "COMPRADOR")) {
     return (
       <Card className="space-y-4">
-        <h1 className="text-2xl font-bold">Mis ofertas</h1>
+        <h1 className="pf-title ">Mis ofertas</h1>
         <p role="alert" className="pf-error">
           Debes contar con una cuenta activa y perfil de comprador para consultar y registrar ofertas.
         </p>
         <div>
           <Link href="/panel" className="pf-btn-secondary">
-            Volver a mi panel
+            Volver al panel
           </Link>
         </div>
       </Card>
@@ -72,7 +73,7 @@ async function MisOfertasContent() {
     <>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: "var(--pf-primary)" }}>
+          <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
             Mis ofertas
           </h1>
           <p className="text-sm mt-1">
@@ -109,7 +110,7 @@ async function MisOfertasContent() {
                   <th>Artículo / Lote</th>
                   <th>Tu seudónimo</th>
                   <th>Monto ofertado (USD)</th>
-                  <th>Fecha y hora (Servidor)</th>
+                  <th>Fecha y hora (Ecuador)</th>
                   <th>Estado de subasta</th>
                   <th>Posición de tu oferta</th>
                   <th>Acción</th>
@@ -118,10 +119,7 @@ async function MisOfertasContent() {
               <tbody>
                 {items.map((item) => {
                   const pos = positionLabel(item);
-                  const dateFormatted = new Date(item.acceptedAt).toLocaleString("es-EC", {
-                    dateStyle: "short",
-                    timeStyle: "medium",
-                  });
+                  const dateFormatted = formatDate(item.acceptedAt);
                   return (
                     <tr key={item.id}>
                       <td className="font-mono text-xs">{item.auctionId}</td>

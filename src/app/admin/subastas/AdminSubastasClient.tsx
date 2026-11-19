@@ -1,4 +1,5 @@
 "use client";
+import { formatDate, toLocalDateTime, fromLocalDateTime } from "@/lib/presentation";
 
 import React, { useState } from "react";
 import Link from "next/link";
@@ -283,14 +284,14 @@ export default function AdminSubastasClient({
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
           <h2 className="text-lg font-semibold">Programar nueva subasta</h2>
           <span className="text-xs font-mono opacity-75">
-            Referencia servidor: {serverNowIso}
+            Hora de referencia (Ecuador): {formatDate(serverNowIso)}
           </span>
         </div>
 
         {approvedArticles.length === 0 ? (
           <div className="space-y-3 text-sm">
             <p role="status">
-              No hay artículos en estado <strong>APROBADO</strong> pendientes de programar en este momento.
+              No hay artículos <strong>aprobados</strong> pendientes de programar en este momento.
             </p>
             <Link href="/admin/verificaciones" className="pf-btn-secondary inline-block">
               Revisar cola de verificaciones
@@ -304,7 +305,7 @@ export default function AdminSubastasClient({
           >
             <div className="pf-field md:col-span-2">
               <label htmlFor="articleId" className="pf-label">
-                Artículo con verificación APROBADA *
+                Artículo con verificación aprobada *
               </label>
               <select
                 id="articleId"
@@ -345,20 +346,20 @@ export default function AdminSubastasClient({
             />
 
             <TextField
-              label="Fecha y hora de apertura (ISO 8601 UTC)"
+              label="Apertura (hora de Ecuador)"
+              type="datetime-local"
               name="opensAt"
-              value={opensAt}
-              onChange={(e) => setOpensAt(e.target.value)}
-              placeholder="2026-11-16T10:00:00Z"
+              value={toLocalDateTime(opensAt)}
+              onChange={(e) => setOpensAt(fromLocalDateTime(e.target.value))}
               required
             />
 
             <TextField
-              label="Fecha y hora de cierre (ISO 8601 UTC)"
+              label="Cierre (hora de Ecuador)"
+              type="datetime-local"
               name="closesAt"
-              value={closesAt}
-              onChange={(e) => setClosesAt(e.target.value)}
-              placeholder="2026-11-17T18:00:00Z"
+              value={toLocalDateTime(closesAt)}
+              onChange={(e) => setClosesAt(fromLocalDateTime(e.target.value))}
               required
             />
 
@@ -385,7 +386,7 @@ export default function AdminSubastasClient({
                   <th>Código</th>
                   <th>Lote / Artículo</th>
                   <th>Salida / Incremento</th>
-                  <th>Apertura / Cierre (Servidor)</th>
+                  <th>Apertura / Cierre (Ecuador)</th>
                   <th>Ofertas</th>
                   <th>Estado</th>
                   <th>Operaciones</th>
@@ -414,9 +415,9 @@ export default function AdminSubastasClient({
                         Incr.: +${auction.minIncrement}
                       </td>
                       <td className="font-mono text-xs">
-                        Abre: {auction.opensAt}
+                        Abre: {formatDate(auction.opensAt)}
                         <br />
-                        Cierra: {auction.closesAt}
+                        Cierra: {formatDate(auction.closesAt)}
                       </td>
                       <td className="text-xs">
                         {auction.bidCount} pujas

@@ -26,14 +26,14 @@ async function AdminSubastasContent() {
     return (
       <Card>
         <div className="space-y-4">
-          <h1 className="text-2xl font-bold" style={{ color: "var(--pf-primary)" }}>
+          <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
             Acceso restringido
           </h1>
           <p role="alert" className="pf-error">
             Solo un administrador de subastas con cuenta activa puede programar o supervisar subastas.
           </p>
           <Link href="/panel" className="pf-btn-secondary inline-block">
-            Volver a mi panel
+            Volver al panel
           </Link>
         </div>
       </Card>
@@ -51,8 +51,8 @@ async function AdminSubastasContent() {
     <>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: "var(--pf-primary)" }}>
-            Programación y Supervisión de Subastas
+          <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
+            Programación y supervisión de subastas
           </h1>
           <p className="text-sm mt-1">
             Configuración comercial de artículos aprobados y control del estado de las subastas.

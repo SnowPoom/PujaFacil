@@ -17,7 +17,6 @@ export interface FileRecordSummary {
   kind: "IDENTIDAD" | "FOTO" | "CERTIFICADO";
   mimeType: string;
   originalName: string;
-  storagePath: string;
   size: number;
   createdAt: string;
 }
@@ -35,6 +34,7 @@ export interface ArticleItem {
   createdAt: string;
   updatedAt: string;
   files?: FileRecordSummary[];
+  reviews?: { id: string; status: string | null; comments: string | null; assignedAt: string; decidedAt: string | null }[];
 }
 
 export const ARTICLE_STATUS_CONFIG: Record<
@@ -51,7 +51,7 @@ export const ARTICLE_STATUS_CONFIG: Record<
   },
   REQUIERE_CORRECCIONES: {
     label: "Requiere correcciones",
-    variant: "error",
+    variant: "accent",
   },
   APROBADO: {
     label: "Aprobado",

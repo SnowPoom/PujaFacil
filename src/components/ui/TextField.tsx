@@ -12,6 +12,9 @@ interface TextFieldProps {
   required?: boolean;
   placeholder?: string;
   disabled?: boolean;
+  min?: string;
+  max?: string;
+  step?: string;
 }
 
 export default function TextField({
@@ -24,6 +27,9 @@ export default function TextField({
   required = false,
   placeholder,
   disabled = false,
+  min,
+  max,
+  step,
 }: TextFieldProps) {
   const inputClassName = `pf-input${error ? " pf-input--error" : ""}`;
 
@@ -37,6 +43,9 @@ export default function TextField({
         id={name}
         name={name}
         type={type}
+        min={min}
+        max={max}
+        step={step}
         value={value}
         onChange={onChange}
         placeholder={placeholder}

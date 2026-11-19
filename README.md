@@ -1,6 +1,6 @@
 # PujaFácil — Casa de Subastas en Línea
 
-Plataforma monolítica de comercio y subastas en tiempo real diseñada para pequeñas y medianas empresas (PYMEs), orientada a la venta transparente, verificación de bienes y ofertas concurrentes. Proyecto desarrollado para el primer bimestre de **Aplicaciones Web Avanzadas** y **Desarrollo de Software Seguro**.
+PujaFácil es una plataforma web de subastas privadas para una casa de subastas PYME ecuatoriana. Permite comercializar artículos exclusivos y de alto valor mediante publicaciones administradas, verificación de autenticidad y ofertas concurrentes. Resuelve la dispersión de expedientes, ofertas y conversaciones de una operación manual, manteniendo la confidencialidad de los participantes. Proyecto desarrollado para el primer bimestre de **Aplicaciones Web Avanzadas** y **Desarrollo de Software Seguro**.
 
 ---
 
@@ -21,7 +21,7 @@ El alcance previsto del primer bimestre cubre el ciclo comercial central de una 
 ## 2. Stack Tecnológico
 
 - **Entorno de Ejecución:** Node.js 24 LTS
-- **Framework Web:** Next.js 16 (App Router, Server Components y Route Handlers)
+- **Framework Web:** Next.js 16 (App Router, Server Components y Route Handlers; compilación con webpack)
 - **Lenguaje:** TypeScript 5
 - **Estilos:** Tailwind CSS 4 con tokens de diseño propios (`.pf-*`)
 - **Base de Datos:** PostgreSQL 16
@@ -78,7 +78,7 @@ Sigue estos pasos para poner en marcha el proyecto localmente:
 
 ### Paso 1: Clonar el repositorio
 ```bash
-git clone https://github.com/Jonathan593/PujaFacil.git
+git clone https://github.com/SnowPoom/PujaFacil.git
 cd PujaFacil
 ```
 
@@ -137,35 +137,33 @@ Verás en consola:
 
 ### Paso 8: Abrir en el navegador
 Ingresa a:
-👉 **[http://localhost:3000](http://localhost:3000)**
+👉 **[http://127.0.0.1:3000](http://127.0.0.1:3000)**
+
+La [guía de inicio y acceso por rol](docs/guia-inicio.md) explica el arranque diario desde VS Code. Se usa webpack con el loader de Tailwind instalado dentro de la cadena CSS de Next para evitar el fallo de workers de Turbopack observado en Windows. No se actualizaron versiones ni se instalaron dependencias adicionales.
 
 ---
 
-## 6. Usuarios de Demostración (Datos Ficticios)
+## 6. Cuentas y catálogo de demostración
 
-Al ejecutar `npm run db:seed`, se generan las siguientes cuentas de prueba:
+Todos los datos de esta sección son sintéticos. La contraseña común de las cuentas creadas por el seed está en `DEMO_PASSWORD` del archivo local `.env`; no se guarda en este README.
 
-| Rol | Correo | Estado |
+| Rol | Correo | Estado inicial |
 |---|---|---|
-| Administrador de Subastas | `admin@pujafacil.test` | `ACTIVA` |
-| Auditor | `auditor@pujafacil.test` | `ACTIVA` |
-| Verificador Técnico | `verificador@pujafacil.test` | `ACTIVA` |
-| Vendedor | `vendedor@pujafacil.test` | `ACTIVA` |
-| Comprador 1 | `comprador1@pujafacil.test` | `ACTIVA` |
-| Comprador 2 | `comprador2@pujafacil.test` | `ACTIVA` |
-| Cuenta Pendiente | `pendiente@pujafacil.test` | `PENDIENTE` |
+| Administración | `admin@pujafacil.test` | ACTIVA |
+| Auditoría | `auditor@pujafacil.test` | ACTIVA |
+| Verificación | `verificador@pujafacil.test` | ACTIVA |
+| Segunda verificación | `verificador2@pujafacil.test` | ACTIVA |
+| Venta | `vendedor@pujafacil.test` | ACTIVA |
+| Compra | `comprador1@pujafacil.test` | ACTIVA |
+| Segunda compra | `comprador2@pujafacil.test` | ACTIVA |
+| Compra y venta | `comerciante@pujafacil.test` | ACTIVA |
+| Cuenta por revisar | `pendiente@pujafacil.test` | PENDIENTE |
 
-La contraseña para las siete cuentas se define exclusivamente en `DEMO_PASSWORD`; no hay contraseña predeterminada. El seed usa bcrypt de coste 12, cifra las cédulas ficticias con AES-256-GCM y utiliza `upsert`. Repetirlo no duplica usuarios, artículos, subasta ni alias; actualiza contraseña, cifrado, rol y estado de las cuentas demo existentes, incluidos los antiguos valores placeholder. No reinicia el estado comercial de artículos o subastas existentes.
+El seed crea hasta 24 artículos exclusivos con fotografías diferentes, precios en USD y procedencias declaradas en Quito, Guayaquil, Cuenca, Loja y Montecristi. Incluye relojería, joyería, arte, instrumentos, cámaras y antigüedades; hay borradores, correcciones, expedientes asignados y subastas activas, programadas y finalizadas. Las fotografías y sus atribuciones están en `prisma/assets/catalog.json`; se copian al almacenamiento privado mediante el servicio de subida. Las fichas de identidad son sintéticas y tienen una indicación de que carecen de validez oficial.
 
-Todos los registros creados por el seed utilizan CUID v1. Los usuarios, sus roles y los alias reciben el ID de `@default(cuid())` de Prisma. Los artículos y la subasta utilizan CUID fijos para mantener el seed idempotente:
+La carga conserva cuentas y expedientes existentes: no borra registros, no cambia contraseñas de cuentas ya creadas y no reinicia decisiones ni fechas comerciales. Para cuentas nuevas utiliza `DEMO_PASSWORD`. Los artículos y las subastas usan CUID de 25 caracteres con prefijo fijo `cseed2026` para evitar duplicados. Las subastas activas nuevas cierran 48 horas después de la carga; la programada abre una hora después. Repetir el seed no vuelve a abrir una subasta cerrada.
 
-| Registro | CUID |
-|---|---|
-| Artículo aprobado | `cmwi7cxk10001pf01a1b2c3d4` |
-| Artículo borrador | `cmwi7cxk10002pf01a1b2c3d4` |
-| Subasta | `cmwi7cxk10000pf01a1b2c3d4` |
-
-La sala de la subasta es `auction:cmwi7cxk10000pf01a1b2c3d4`. Al ejecutar `npm.cmd run db:seed`, los antiguos IDs `demo-articulo-aprobado`, `demo-articulo-borrador` y `demo-subasta-programada`, si existen, se convierten dentro de una misma transacción. Las relaciones con archivos, revisiones, subastas, pujas, alias y mensajes se conservan mediante las FK; también se actualiza el nombre de sala en los mensajes. Los archivos físicos no se renombran. Las URL y clientes, incluidos los ejemplos de subida que pasaban `articleId`, deben utilizar los CUID nuevos. Si un registro antiguo y su nuevo ID ya coexisten, se revierte la transacción de artículos y subasta para evitar fusionar o eliminar datos automáticamente.
+El alcance del primer bimestre termina en cierre y adjudicación. Los pagos en línea y la entrega pertenecen a la evolución posterior del negocio.
 
 ---
 
@@ -184,7 +182,7 @@ npm.cmd test
 npm.cmd run build
 ```
 
-La suite configurada en Vitest contiene 320 pruebas unitarias y de integración que validan los servicios de autenticación, artículos, subastas, ofertas concurrentes, chat WebSocket, subidas y auditoría.
+La suite configurada en Vitest contiene 364 pruebas unitarias y de integración aislada que validan los servicios de autenticación, artículos, subastas, ofertas concurrentes, chat WebSocket, subidas y auditoría.
 
 Para ejecutar el build local como producción, define el entorno antes de arrancar el servidor:
 
@@ -275,6 +273,7 @@ Las cookies de producción llevan `Secure`: utiliza HTTPS para iniciar sesión e
 
 ## 11. Documentación y Diagramas
 
+- **Guía para la exposición:** [Word](docs/guia-exposicion.docx) · [Texto consultable](docs/guia-exposicion.md), con recorrido de quince minutos, ensayo ampliado y cobertura de requisitos.
 - **Modelo de Datos y Entidades:** Detalle de tablas, tipos y relaciones en [`docs/modelo-datos.md`](docs/modelo-datos.md).
 - **Esquema Prisma:** Definición completa en [`prisma/schema.prisma`](prisma/schema.prisma).
 - **Arquitectura:** [PNG](docs/arquitectura-monolito.png) · [SVG editable](docs/arquitectura-monolito.svg).
@@ -288,3 +287,12 @@ En cumplimiento con las directrices académicas del curso:
 - **Herramientas utilizadas:** Codex para implementar los planes J2/15-C y de integración del 16/11, y apoyar la revisión de código.
 - **Finalidad:** Servicios de archivos y auditoría, integración del Header y servidor, diagramas SVG/PNG generados con Sharp, configuración Docker, pruebas automatizadas y documentación de ejecución.
 - **Revisión:** Se contrasta el código con el esquema Prisma, los permisos, la documentación incluida con Next.js y las comprobaciones lint/test/build. La revisión humana y las pruebas manuales de despliegue, TLS y chat siguen siendo responsabilidad del equipo; no se atribuyen verificaciones que no se hayan ejecutado.
+
+## Verificación local del 18 de noviembre
+
+- ESLint, TypeScript y 364 pruebas automatizadas aprobados durante la revisión de integración.
+- Compilación con webpack comprobada tras reemplazar la ejecución de workers de Turbopack por la cadena CSS de Next con el loader Tailwind ya instalado.
+- `npx.cmd tsx src/tests/app-flow.integration.ts` verifica contra HTTP y PostgreSQL reales: acceso de cinco cuentas, CRUD con eliminación de un borrador propio, foto, correcciones visibles para el vendedor, reenvío y aprobación, programación, dos clientes con transporte WebSocket, chat, puja en vivo, idempotencia, concurrencia, cierre y ganador. También consulta las pantallas privadas de cada rol. El script crea un artículo comercial de demostración y elimina únicamente su borrador temporal.
+- Este recorrido se ejecutó en HTTP local. No constituye una nueva comprobación de TLS/WSS. Las evidencias anteriores de WSS permanecen en `docs/evidencias`.
+- Los textos y componentes se ajustaron a la paleta acordada, con fechas de Ecuador continental, estados legibles, navegación por rol y acciones de cuenta pendiente visibles pero deshabilitadas.
+- Apoyo de IA: Codex se utilizó para estas correcciones, pruebas y preparación de datos sintéticos. Se conserva el stack del proyecto.

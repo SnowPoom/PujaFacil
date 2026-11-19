@@ -1,3 +1,4 @@
+import { formatDate } from "@/lib/presentation";
 import { Suspense } from "react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
@@ -50,14 +51,14 @@ async function VerificationDetailContent({
     return (
       <Card>
         <div className="space-y-4">
-          <h1 className="text-2xl font-bold" style={{ color: "var(--pf-primary)" }}>
+          <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
             Acceso restringido
           </h1>
           <p role="alert" className="pf-error">
             Solo un verificador con cuenta activa puede evaluar expedientes de revisión.
           </p>
           <Link href="/panel" className="pf-btn-secondary inline-block">
-            Volver a mi panel
+            Volver al panel
           </Link>
         </div>
       </Card>
@@ -82,7 +83,7 @@ async function VerificationDetailContent({
     return (
       <Card>
         <div className="space-y-4">
-          <h1 className="text-2xl font-bold" style={{ color: "var(--pf-primary)" }}>
+          <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
             {title}
           </h1>
           <p role="alert" className="pf-error">
@@ -103,11 +104,11 @@ async function VerificationDetailContent({
     <>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: "var(--pf-primary)" }}>
-            Evaluación de Expediente #{review.id}
+          <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
+            Evaluación de expediente #{review.id}
           </h1>
           <p className="text-sm mt-1">
-            Revisión documental reservada. Por políticas de privacidad, la identidad del vendedor titular se mantiene protegida.
+            Consulta el expediente y registra tu evaluación técnica del artículo.
           </p>
         </div>
         <Link href="/verificacion" className="pf-btn-secondary">
@@ -200,7 +201,7 @@ async function VerificationDetailContent({
                           <img
                             src={fileUrl}
                             alt={`Evidencia fotográfica ${idx + 1} de ${review.title}`}
-                            className="w-full h-40 object-cover rounded border mb-2"
+                            className="w-full h-40 object-contain rounded border mb-2"
                             style={{ borderColor: "var(--pf-border)" }}
                           />
                         )}
@@ -230,7 +231,7 @@ async function VerificationDetailContent({
 
         <div>
           <Card>
-            <h2 className="text-lg font-semibold mb-2">Resolución del Verificador</h2>
+            <h2 className="text-lg font-semibold mb-2">Resolución de verificación</h2>
             {isPending ? (
               <>
                 <p className="text-xs mb-4 opacity-80">
@@ -259,7 +260,7 @@ async function VerificationDetailContent({
                       Fecha de resolución
                     </span>
                     <span className="font-mono text-xs">
-                      {new Date(review.decidedAt).toLocaleString("es-EC")}
+                      {formatDate(review.decidedAt)}
                     </span>
                   </div>
                 )}

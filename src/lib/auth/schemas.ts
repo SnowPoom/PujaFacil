@@ -17,7 +17,7 @@ export const registerSchema = z.object({
   nombreCompleto: z.string().trim().min(3, "Ingresa tu nombre completo.").max(100),
   email,
   password: passwordSchema,
-  cedula: z.string().regex(/^\d{10}$/, "La cédula ficticia debe tener 10 dígitos."),
+  cedula: z.string().regex(/^\d{10}$/, "La cédula debe tener 10 dígitos."),
   roles: z.array(z.enum(["COMPRADOR", "VENDEDOR"])).min(1, "Selecciona al menos un perfil.").max(2).refine((roles) => new Set(roles).size === roles.length, "No repitas perfiles."),
 });
 // IDENTIDAD se valida con saveValidatedUpload de Jonathan al integrar J2.

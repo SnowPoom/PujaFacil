@@ -10,7 +10,7 @@ export const prisma: PrismaClient =
   global.__prisma ??
   new PrismaClient({
     log:
-      process.env.NODE_ENV === "development"
+      process.env.NODE_ENV === "development" && process.env.PRISMA_LOG_QUERIES === "true"
         ? ["query", "warn", "error"]
         : ["error"],
   });

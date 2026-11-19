@@ -1,17 +1,19 @@
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { readFileSync } from "node:fs";
+import { loadEnvConfig } from "@next/env";
 import next from "next";
 import { Server } from "socket.io";
-import { registerSocketHandlers } from "@/server/socket/index";
 
+loadEnvConfig(process.cwd(), process.env.NODE_ENV !== "production");
 const dev = process.env.NODE_ENV !== "production";
+const port = Number(process.env.PORT ?? 3000);
 
-const app = next({ dev });
+const app = next({ dev, hostname: "localhost", port, webpack: true });
 const handle = app.getRequestHandler();
 
-app.prepare().then(() => {
-  const port = Number(process.env.PORT ?? 3000);
+app.prepare().then(async () => {
+  const { registerSocketHandlers } = await import("@/server/socket/index");
   const keyPath = process.env.HTTPS_KEY_PATH;
   const certPath = process.env.HTTPS_CERT_PATH;
 
