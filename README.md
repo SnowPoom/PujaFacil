@@ -139,7 +139,7 @@ Verás en consola:
 Ingresa a:
 👉 **[http://127.0.0.1:3000](http://127.0.0.1:3000)**
 
-La [guía de inicio y acceso por rol](docs/guia-inicio.md) explica el arranque diario desde VS Code. Se usa webpack con el loader de Tailwind instalado dentro de la cadena CSS de Next para evitar el fallo de workers de Turbopack observado en Windows. No se actualizaron versiones ni se instalaron dependencias adicionales.
+Se usa webpack con el loader de Tailwind instalado dentro de la cadena CSS de Next para evitar el fallo de workers de Turbopack observado en Windows. No se actualizaron versiones ni se instalaron dependencias adicionales.
 
 ---
 
@@ -273,7 +273,6 @@ Las cookies de producción llevan `Secure`: utiliza HTTPS para iniciar sesión e
 
 ## 11. Documentación y Diagramas
 
-- **Guía para la exposición:** [Word](docs/guia-exposicion.docx) · [Texto consultable](docs/guia-exposicion.md), con recorrido de quince minutos, ensayo ampliado y cobertura de requisitos.
 - **Modelo de Datos y Entidades:** Detalle de tablas, tipos y relaciones en [`docs/modelo-datos.md`](docs/modelo-datos.md).
 - **Esquema Prisma:** Definición completa en [`prisma/schema.prisma`](prisma/schema.prisma).
 - **Arquitectura:** [PNG](docs/arquitectura-monolito.png) · [SVG editable](docs/arquitectura-monolito.svg).
