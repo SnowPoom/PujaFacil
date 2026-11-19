@@ -2,11 +2,12 @@ import { randomBytes } from "node:crypto";
 import { Prisma, type AccountStatus, type AuctionStatus, type Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { hasValidRoles } from "@/lib/auth/roles";
+import { displayAlias } from "@/lib/aliases";
 import { MAX_CHAT_TEXT, parseRoom, sanitizeChatText, type ChatMessageDto, type ParsedRoom } from "@/modules/chat/chat-rules";
 
 // Reglas compartidas entre Socket.IO y HTTP para no duplicarlas (Kevin 14/11).
 export const GENERAL_ALIAS = "Participante";
-const FALLBACK_AUCTION_ALIAS = "Postor";
+const FALLBACK_AUCTION_ALIAS = "Usuario";
 const READABLE_AUCTION_STATUS: readonly AuctionStatus[] = ["PROGRAMADA", "ACTIVA", "CERRADA_SIN_OFERTAS", "ADJUDICADA"];
 const WRITABLE_AUCTION_STATUS: readonly AuctionStatus[] = ["PROGRAMADA", "ACTIVA"];
 
@@ -39,22 +40,22 @@ export async function assertCanChat(userId: string): Promise<ChatAccount> {
 }
 
 /** La sala debe tener formato válido y, si es de subasta, existir y ser visible. */
-export async function validateRoomAccess(room: unknown, mode: "read" | "write" = "read", db: Prisma.TransactionClient = prisma): Promise<ParsedRoom> {
+export async function validateRoomAccess(room: unknown, mode: "read" | "write" = "read", db: Prisma.TransactionClient = prisma): Promise<ParsedRoom & { sellerId?: string }> {
   const parsed = parseRoom(room);
   if (!parsed) throw new ChatError(400, "SALA_INVALIDA", "La sala indicada no es válida.");
   if (parsed.kind === "general") return parsed;
-  const auction = await db.auction.findUnique({ where: { id: parsed.auctionId }, select: { status: true } });
+  const auction = await db.auction.findUnique({ where: { id: parsed.auctionId }, select: { status: true, article: { select: { ownerId: true } } } });
   if (!auction || !READABLE_AUCTION_STATUS.includes(auction.status)) {
     throw new ChatError(404, "SALA_NO_DISPONIBLE", "No tienes acceso a esta sala o no existe.");
   }
   if (mode === "write" && !WRITABLE_AUCTION_STATUS.includes(auction.status)) {
     throw new ChatError(409, "SALA_SOLO_LECTURA", "La subasta ya terminó; esta sala es solo de lectura.");
   }
-  return parsed;
+  return auction.article?.ownerId ? { ...parsed, sellerId: auction.article.ownerId } : parsed;
 }
 
 export function generateAuctionAlias(): string {
-  return `Postor-${randomBytes(3).toString("hex")}`;
+  return `Usuario-${randomBytes(3).toString("hex")}`;
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -65,7 +66,7 @@ function isUniqueViolation(error: unknown): boolean {
 export async function getOrCreateAuctionAlias(auctionId: string, userId: string, db: Prisma.TransactionClient = prisma): Promise<string> {
   const where = { auctionId_userId: { auctionId, userId } };
   const existing = await db.auctionAlias.findUnique({ where, select: { alias: true } });
-  if (existing) return existing.alias;
+  if (existing) return displayAlias(existing.alias);
   for (let attempt = 0; attempt < 5; attempt += 1) {
     // En una transacción una colisión única abortaría también el guard de sesión.
     // El savepoint conserva el reintento existente sin abrir otra conexión.
@@ -73,7 +74,7 @@ export async function getOrCreateAuctionAlias(auctionId: string, userId: string,
     try {
       const created = await db.auctionAlias.create({ data: { auctionId, userId, alias: generateAuctionAlias() }, select: { alias: true } });
       if (db !== prisma) await db.$executeRaw`RELEASE SAVEPOINT chat_alias_attempt`;
-      return created.alias;
+      return displayAlias(created.alias);
     } catch (error) {
       if (db !== prisma) {
         await db.$executeRaw`ROLLBACK TO SAVEPOINT chat_alias_attempt`;
@@ -82,7 +83,7 @@ export async function getOrCreateAuctionAlias(auctionId: string, userId: string,
       if (!isUniqueViolation(error)) throw error;
       // Otra petición del mismo usuario pudo crearlo a la vez; si no, el alias chocó y se reintenta.
       const raced = await db.auctionAlias.findUnique({ where, select: { alias: true } });
-      if (raced) return raced.alias;
+      if (raced) return displayAlias(raced.alias);
     }
   }
   throw new Error("No se pudo generar un seudónimo único para la subasta.");
@@ -95,7 +96,8 @@ export async function saveMessage(input: { room: unknown; authorId: string; text
   if (!text) throw new ChatError(400, "MENSAJE_VACIO", "El mensaje no contiene texto permitido.");
   if (text.length > MAX_CHAT_TEXT) throw new ChatError(400, "MENSAJE_LARGO", `El mensaje admite como máximo ${MAX_CHAT_TEXT} caracteres.`);
   const auctionId = parsed.kind === "auction" ? parsed.auctionId : null;
-  const authorAlias = auctionId ? await getOrCreateAuctionAlias(auctionId, input.authorId, db) : GENERAL_ALIAS;
+  const alias = auctionId ? await getOrCreateAuctionAlias(auctionId, input.authorId, db) : GENERAL_ALIAS;
+  const authorAlias = alias + (auctionId && parsed.sellerId === input.authorId ? " (Vendedor)" : "");
   const message = await db.chatMessage.create({
     data: { room: parsed.room, authorId: input.authorId, auctionId, text },
     select: { id: true, room: true, text: true, createdAt: true },
@@ -118,13 +120,13 @@ export async function getHistory(room: unknown, limit: number): Promise<ChatMess
       where: { auctionId: parsed.auctionId, userId: { in: [...new Set(rows.map((row) => row.authorId))] } },
       select: { userId: true, alias: true },
     });
-    for (const { userId, alias } of aliases) aliasByUser.set(userId, alias);
+    for (const { userId, alias } of aliases) aliasByUser.set(userId, displayAlias(alias));
   }
   return rows.reverse().map((row) => ({
     id: row.id,
     room: row.room,
     text: row.text,
-    authorAlias: parsed.kind === "general" ? GENERAL_ALIAS : aliasByUser.get(row.authorId) ?? FALLBACK_AUCTION_ALIAS,
+    authorAlias: parsed.kind === "general" ? GENERAL_ALIAS : (aliasByUser.get(row.authorId) ?? FALLBACK_AUCTION_ALIAS) + (parsed.sellerId === row.authorId ? " (Vendedor)" : ""),
     createdAt: row.createdAt.toISOString(),
   }));
 }

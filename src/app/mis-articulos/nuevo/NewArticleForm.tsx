@@ -102,9 +102,7 @@ export default function NuevoArticuloPage() {
         <h1 className="pf-title ">
           Publicar nuevo artículo
         </h1>
-        <p className="text-sm text-[var(--pf-muted)] mt-1">
-          Ingresa los detalles para registrar un borrador. Luego podrás adjuntar fotografías y enviarlo a verificación.
-        </p>
+
       </div>
 
       {/* Alerta de error del servidor */}

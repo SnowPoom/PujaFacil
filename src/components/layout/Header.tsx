@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import Badge from "@/components/ui/Badge";
@@ -110,17 +110,22 @@ function NavLink({
 /*  Header                                                              */
 /* ------------------------------------------------------------------ */
 
-export default function Header() {
+export default function Header({ initialUser }: { initialUser: AuthUser | null }) {
   const pathname = usePathname();
   const router = useRouter();
 
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  const [user, setUser] = useState<AuthUser | null>(initialUser);
+  const [authLoading, setAuthLoading] = useState(false);
+  const initialPath = useRef(pathname);
+  const navigated = useRef(false);
   const [logoutLoading, setLogoutLoading] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   /* ---- Fetch current session ---- */
   useEffect(() => {
+    // La primera sesión ya viene en el HTML; revalidar después de navegar.
+    if (!navigated.current && pathname === initialPath.current) return;
+    navigated.current = true;
     let cancelled = false;
 
     async function fetchMe() {

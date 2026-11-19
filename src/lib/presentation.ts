@@ -1,3 +1,4 @@
+import { displayAlias } from "./aliases";
 /** Presentación común. Los códigos de API y base de datos permanecen intactos. */
 export const DISPLAY_LABELS: Record<string, string> = {
   COMPRADOR: "Comprador", VENDEDOR: "Vendedor", VERIFICADOR: "Verificador",
@@ -24,8 +25,9 @@ export function statusTone(code: string): StatusTone | undefined {
   if (["PROGRAMADA", "PENDIENTE", "PENDIENTE_REVISION", "REQUIERE_CORRECCIONES", "ASIGNADO", "ASOCIADO_SUBASTA"].includes(code)) return "accent";
   if (["BORRADOR", "ARCHIVADO", "CERRADA", "CERRADA_SIN_OFERTAS"].includes(code)) return "neutral";
 }
+const dateFormatter = new Intl.DateTimeFormat("es-EC", { timeZone: "America/Guayaquil", dateStyle: "medium", timeStyle: "short" });
 export function formatDate(value: string | Date): string {
-  return new Intl.DateTimeFormat("es-EC", { timeZone: "America/Guayaquil", dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  return dateFormatter.format(new Date(value));
 }
 /** Ecuador continental usa UTC−5 todo el año. */
 export function toLocalDateTime(value: string): string {
@@ -37,5 +39,5 @@ export function fromLocalDateTime(value: string): string {
 }
 
 export function humanizeText(value: string): string {
-  return value.replace(/\b[A-Z][A-Z_]{2,}\b/g, (code) => DISPLAY_LABELS[code] ?? code);
+  return displayAlias(value).replace(/\b[A-Z][A-Z_]{2,}\b/g, (code) => DISPLAY_LABELS[code] ?? code);
 }

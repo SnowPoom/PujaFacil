@@ -139,7 +139,7 @@ Verás en consola:
 Ingresa a:
 👉 **[http://127.0.0.1:3000](http://127.0.0.1:3000)**
 
-La [guía de inicio y acceso por rol](docs/guia-inicio.md) explica el arranque diario desde VS Code. Se usa webpack con el loader de Tailwind instalado dentro de la cadena CSS de Next para evitar el fallo de workers de Turbopack observado en Windows. No se actualizaron versiones ni se instalaron dependencias adicionales.
+Se usa webpack con el loader de Tailwind instalado dentro de la cadena CSS de Next para evitar el fallo de workers de Turbopack observado en Windows. No se actualizaron versiones ni se instalaron dependencias adicionales.
 
 ---
 

@@ -28,6 +28,7 @@ export default function ChatRoom() {
   const [text, setText] = useState<string>("");
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState<boolean>(false);
+  const [notificationSocket, setNotificationSocket] = useState<ReturnType<typeof io> | null>(null);
   const socketRef = React.useRef<ReturnType<typeof io> | null>(null);
 
   useEffect(() => {
@@ -103,6 +104,7 @@ export default function ChatRoom() {
     };
 
     socket.on("connect", () => {
+      setNotificationSocket(socket);
       if (cancelled) return;
       socket.emit("chat:join", { room: parsed.room }, (ack: ChatJoinAck) => {
         if (cancelled) return;
@@ -218,7 +220,7 @@ export default function ChatRoom() {
               Sala general
             </Link>
           )}
-          <NotificationBellLink className="pf-btn-secondary" />
+          <NotificationBellLink socket={notificationSocket} className="pf-btn-secondary" />
           <Link href="/panel" className="pf-btn-secondary">
             Volver al panel
           </Link>

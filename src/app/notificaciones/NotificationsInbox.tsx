@@ -99,9 +99,7 @@ export default function NotificationsInbox({
           <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
             Centro de notificaciones
           </h1>
-          <p className="text-sm mt-1">
-            Bandeja interna de avisos sobre tus ofertas, subastas y verificaciones en tiempo real.
-          </p>
+
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <Badge variant={connected ? "success" : "neutral"}>

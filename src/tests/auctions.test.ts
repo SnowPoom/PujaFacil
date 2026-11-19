@@ -1114,8 +1114,8 @@ describe("Antony — Flujo Comercial de Subastas, Supervisión y Contratos Públ
         { id: "bid_02", buyerId: "usr_buyer_secret_02", amount: new Prisma.Decimal("950.00") },
       ],
       aliases: [
-        { userId: "usr_buyer_secret_01", alias: "Postor-8f9a1b" },
-        { userId: "usr_buyer_secret_02", alias: "Postor-2c3d4e" },
+        { userId: "usr_buyer_secret_01", alias: "Usuario-8f9a1b" },
+        { userId: "usr_buyer_secret_02", alias: "Usuario-2c3d4e" },
       ],
     });
 
@@ -1144,7 +1144,7 @@ describe("Antony — Flujo Comercial de Subastas, Supervisión y Contratos Públ
         closesAt: "2026-11-15T18:00:00.000Z",
         highestBid: "1125.00",
         bidCount: 2,
-        winnerAlias: "Postor-8f9a1b",
+        winnerAlias: "Usuario-8f9a1b",
       },
     });
 
@@ -1175,7 +1175,7 @@ describe("Antony — Flujo Comercial de Subastas, Supervisión y Contratos Públ
           files: [{ id: "file_photo_01" }],
         },
         bids: [{ id: "bid_01", buyerId: "usr_buyer_secret_01", amount: new Prisma.Decimal("950.00") }],
-        aliases: [{ userId: "usr_buyer_secret_01", alias: "Postor-8f9a1b" }],
+        aliases: [{ userId: "usr_buyer_secret_01", alias: "Usuario-8f9a1b" }],
       },
     ]);
     db.auction.count.mockResolvedValueOnce(1);
@@ -1236,12 +1236,12 @@ describe("Antony — Flujo Comercial de Subastas, Supervisión y Contratos Públ
           category: "Platería",
         },
         bids: [{ id: "bid_w_01", buyerId: "usr_buyer_secret_99", amount: new Prisma.Decimal("620.00") }],
-        aliases: [{ userId: "usr_buyer_secret_99", alias: "Postor-A84F" }],
+        aliases: [{ userId: "usr_buyer_secret_99", alias: "Usuario-A84F" }],
       },
     ]);
     const sellerAuctions = await listSellerAuctions(USERS.seller.id);
     expect(sellerAuctions).toHaveLength(1);
-    expect(sellerAuctions[0]?.winnerAlias).toBe("Postor-A84F");
+    expect(sellerAuctions[0]?.winnerAlias).toBe("Usuario-A84F");
     expect(JSON.stringify(sellerAuctions)).not.toContain("usr_buyer_secret_99");
 
     db.article.count.mockResolvedValueOnce(2);

@@ -59,3 +59,13 @@ La puntuación de Performance obtenida fue **93/100**. Los valores anteriores so
 Con Node.js 24.15, Next.js 16.4.6 en desarrollo con webpack y PostgreSQL local en Docker, se consultó `GET /api/public/articles?pageSize=8` con una base de 25 artículos. Después del calentamiento, cinco solicitudes secuenciales, incluyendo lectura del JSON, tardaron **94.96, 111.40, 42.07, 42.66 y 41.78 ms**: media **66.57 ms** y mediana **42.66 ms**.
 
 Esta comprobación verifica la respuesta del catálogo poblado. No se ejecutó nuevamente Lighthouse; las condiciones y el método difieren de la medición histórica de DevTools, por lo que estos resultados no permiten calcular una mejora porcentual.
+
+## Ajustes del 19 de noviembre
+
+Se reutilizan los listados iniciales renderizados en el servidor, evitando repetir las consultas al hidratar catálogo, subastas y artículos propios. La cabecera recibe la sesión inicial del servidor y comparte su consulta con la página durante la misma petición mediante React cache; no se guarda una caché global de sesiones. Al navegar se vuelve a comprobar la sesión.
+
+La ficha de subasta usa una sola conexión Socket.IO para pujas, actualización de la ficha y avisos. El chat comparte su conexión con el contador de avisos. El panel consulta un único endpoint que ya incluye estado e historial, y el envío de pujas evita repetir la comprobación de sesión que ya realiza requireRole. Se conservan los controles de cuenta activa, comprador, propiedad del artículo y vigencia de la subasta.
+
+En desarrollo se conservan hasta 30 entradas compiladas durante 30 minutos para reducir recompilaciones al alternar entre pantallas y perfiles. Esto consume más memoria que el buffer mínimo de desarrollo y no elimina la compilación inicial. También se reutiliza el formateador de fechas y se presenta un estado de carga durante las transiciones.
+
+Comprobación HTTP local de pantallas calentadas, en desarrollo y con sesión: catálogo 326 ms, artículos propios 434 ms, aprobación de clientes 313 ms, panel 240 ms y ficha de subasta 612 ms. Son muestras individuales, no tiempos de interacción del navegador ni una comparación controlada antes y después. Las pruebas funcionales verificaron además que la API rechaza ofertas de administrador, auditor, verificador y vendedor sin perfil comprador, y que el listado de clientes excluye los perfiles internos.

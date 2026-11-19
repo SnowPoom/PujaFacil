@@ -21,6 +21,7 @@ export default function NotificationBellLink({
   const [unreadCount, setUnreadCount] = useState<number>(0);
 
   useEffect(() => {
+    if (socket === null) return;
     let cancelled = false;
 
     const loadUnread = async () => {

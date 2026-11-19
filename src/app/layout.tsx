@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import Header from "@/components/layout/Header";
+import SessionHeader from "@/components/layout/SessionHeader";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,7 +13,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="es" className="h-full">
       <body className="flex min-h-screen flex-col">
         <Suspense fallback={null}>
-          <Header />
+          <SessionHeader />
         </Suspense>
         {/* Las páginas ya declaran su propio main; evitamos landmarks anidados. */}
         <div className="flex-1">{children}</div>

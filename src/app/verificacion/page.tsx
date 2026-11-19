@@ -61,9 +61,7 @@ async function VerificacionBandejaContent() {
           <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
             Bandeja de verificación
           </h1>
-          <p className="text-sm mt-1">
-            Expedientes asignados para validación documental y técnica antes de su publicación comercial.
-          </p>
+
         </div>
         <Link href="/panel" className="pf-btn-secondary">
           Volver al panel

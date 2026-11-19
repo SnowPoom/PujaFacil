@@ -107,9 +107,7 @@ async function VerificationDetailContent({
           <h1 className="pf-title " style={{ color: "var(--pf-primary)" }}>
             Evaluación de expediente #{review.id}
           </h1>
-          <p className="text-sm mt-1">
-            Consulta el expediente y registra tu evaluación técnica del artículo.
-          </p>
+
         </div>
         <Link href="/verificacion" className="pf-btn-secondary">
           ← Volver a la bandeja
@@ -163,9 +161,7 @@ async function VerificationDetailContent({
             <h2 className="text-lg font-semibold mb-3">
               Evidencia fotográfica y certificados adjuntos
             </h2>
-            <p className="text-xs mb-4 opacity-80">
-              Documentación y fotografías cargadas en el expediente para validación técnica mediante acceso protegido.
-            </p>
+
 
             {review.files.length === 0 ? (
               <p className="text-sm opacity-75" role="status">
@@ -234,9 +230,7 @@ async function VerificationDetailContent({
             <h2 className="text-lg font-semibold mb-2">Resolución de verificación</h2>
             {isPending ? (
               <>
-                <p className="text-xs mb-4 opacity-80">
-                  La aprobación habilita el artículo para que la administración programe su subasta.
-                </p>
+
                 <ReviewDecisionForm reviewId={review.id} />
               </>
             ) : (

@@ -28,14 +28,7 @@ function renderLoad(mimeType: string) {
 async function loaded() { await vi.waitFor(() => expect(hooks.setters[1]).toHaveBeenCalledWith(false)); }
 
 describe("Christian C1 — carga de documentos en el cliente", () => {
-  it("abrir una revisión PDF solo consulta los datos: no descarga el PDF ni crea URLs temporales", async () => {
-    const cleanup = renderLoad("application/pdf"); await loaded();
-    expect(fetchMock).toHaveBeenCalledExactlyOnceWith("/api/admin/users/pendiente", expect.objectContaining({ credentials: "same-origin", cache: "no-store" }));
-    expect(hooks.setters[0]).toHaveBeenCalledWith(expect.objectContaining({ identity: { id: "identidad", mimeType: "application/pdf" }, objectUrl: undefined }));
-    expect(URL.createObjectURL).not.toHaveBeenCalled();
-    cleanup?.(); expect(URL.revokeObjectURL).not.toHaveBeenCalled();
-  });
-  it.each(["image/png", "image/jpeg", "image/webp"])("%s consulta una sola vez el archivo protegido y libera la URL usada por la imagen", async (mimeType) => {
+  it.each(["application/pdf", "image/png", "image/jpeg", "image/webp"])("%s consulta una sola vez el archivo protegido para la vista previa y libera su URL", async (mimeType) => {
     const cleanup = renderLoad(mimeType);
     fetchMock.mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": mimeType } }));
     await loaded();

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import Card from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
@@ -25,7 +25,10 @@ export default function ArticlesClient({ initialItems, initialPages, initialStat
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
+  const initialListing = useRef(true);
   useEffect(() => {
+    if (initialListing.current && page === 1 && searchQuery === "" && reloadTrigger === 0) return;
+    initialListing.current = false;
     let isMounted = true;
 
     async function fetchArticles() {
@@ -198,9 +201,7 @@ export default function ArticlesClient({ initialItems, initialPages, initialStat
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="pf-title ">Mis artículos</h1>
-          <p className="text-sm text-[var(--pf-muted)] mt-1">
-            Gestiona tus lotes, borradores y artículos enviados a verificación para subasta.
-          </p>
+
         </div>
         <Link href="/mis-articulos/nuevo" className="pf-btn self-start sm:self-auto">
           Publicar nuevo artículo

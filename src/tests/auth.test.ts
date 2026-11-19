@@ -22,7 +22,7 @@ import { encryptCedula, decryptCedula } from "../lib/auth/crypto";
 import { loginSchema, registerSchema, passwordSchema, forgotSchema } from "../lib/auth/schemas";
 import { createUserSession, deleteSessionFromRawToken, getUserFromCookieHeader, hashToken, sessionCookie } from "../lib/auth/session";
 import { assertTrustedOrigin, canAccessResource, hasRole, requireActive, requireRole, requireSession } from "../lib/auth/guards";
-import { hasValidRoles } from "../lib/auth/roles";
+import { hasValidRoles, bidRestriction } from "../lib/auth/roles";
 import type { Role } from "@prisma/client";
 import { POST as login } from "../app/api/auth/login/route";
 import { POST as logout } from "../app/api/auth/logout/route";
@@ -194,6 +194,8 @@ describe("Christian C1 — recuperación, perfil y activación", () => {
     const response = await accounts(new Request("http://localhost:3000/api/admin/users?page=2&pageSize=10", { headers: { cookie: `pf_session=${token}` } }));
     expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ data: { page: 2, pages: 3, total: 21, items: [{ hasIdentity: true, roles: ["VENDEDOR"] }] } });
     const query = db.user.findMany.mock.calls[0][0]; expect(query.skip).toBe(10);
+    expect(query.where.roles).toEqual({ some: { role: { in: ["COMPRADOR", "VENDEDOR"] } }, none: { role: { in: ["ADMIN_SUBASTAS", "VERIFICADOR", "AUDITOR"] } } });
+    expect(db.user.count).toHaveBeenCalledWith({ where: query.where });
     for (const key of ["nombreCompleto", "email", "cedulaCifrada", "passwordHash", "files"]) expect(query.select).not.toHaveProperty(key);
   });
   it("activación rechaza la petición antigua sin revisión ni motivo", async () => {
@@ -224,7 +226,7 @@ describe("Christian C1 — revisión documental con dependencias J2 simuladas", 
   const updatedAt = new Date("2026-11-15T18:00:00Z");
   const input = { reviewId: "revision", documentoRevisadoId: "identidad", coherenciaConfirmada: true, motivoCodigo: APPROVAL_REASON };
   const context = { params: Promise.resolve({ id: "otro" }) };
-  const pending = () => ({ id: "otro", status: "PENDIENTE", updatedAt, nombreCompleto: "Persona ficticia", cedulaCifrada: encryptCedula("1234567890"), files: [{ id: "identidad", mimeType: "image/png" }] });
+  const pending = () => ({ roles: [{ role: "COMPRADOR" }], id: "otro", status: "PENDIENTE", updatedAt, nombreCompleto: "Persona ficticia", cedulaCifrada: encryptCedula("1234567890"), files: [{ id: "identidad", mimeType: "image/png" }] });
   const dataEvent = () => ({ id: "revision", actorId: user.id, action: "CUENTA_DATOS_CONSULTADOS", resourceId: "identidad", resourceType: "FileRecord", createdAt: new Date(), detail: { accountVersion: updatedAt.getTime() } });
   beforeEach(() => {
     asAdmin(); db.user.findUnique.mockResolvedValue(pending());
@@ -241,6 +243,13 @@ describe("Christian C1 — revisión documental con dependencias J2 simuladas", 
     const event = vi.mocked(writeAuditEvent).mock.calls[0][0];
     expect(event).toMatchObject({ actorId: user.id, action: "CUENTA_DATOS_CONSULTADOS", resourceId: "identidad", detail: { accountVersion: updatedAt.getTime() } });
     expect(JSON.stringify(event)).not.toContain("1234567890"); expect(JSON.stringify(event)).not.toContain("Persona ficticia");
+  });
+  it.each(["ADMIN_SUBASTAS", "AUDITOR", "VERIFICADOR"])("no permite revisar ni activar una cuenta interna %s", async (role) => {
+    db.user.findUnique.mockResolvedValue({ ...pending(), roles: [{ role }] });
+    expect((await reviewAccount(request(), context)).status).toBe(404);
+    expect((await activate(mutation("/api/admin/users/otro/activate", input), context)).status).toBe(409);
+    expect(db.user.update).not.toHaveBeenCalled();
+    expect(writeAuditEvent).not.toHaveBeenCalled();
   });
   it.each(["COMPRADOR", "AUDITOR", "VERIFICADOR"])("%s no puede revisar ni activar", async (role) => {
     db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 60000), user: { ...user, roles: [{ role }] } });
@@ -623,5 +632,19 @@ describe("Christian C0 — privacidad de respuestas HTTP", () => {
     expect(response.status).toBe(500);
     expect(await response.text()).not.toContain(secret);
     expect(logger).toHaveBeenCalledWith("[auth] No se pudo completar la operación.");
+  });
+});
+
+
+describe("Disponibilidad del formulario de ofertas", () => {
+  it.each(["VENDEDOR", "ADMIN_SUBASTAS", "AUDITOR", "VERIFICADOR"] as const)("bloquea el formulario para %s", (role) => {
+    expect(bidRestriction({ id: "u1", status: "ACTIVA", roles: [role] })).not.toBeNull();
+  });
+  it("permite comprador y comprador/vendedor únicamente en piezas ajenas", () => {
+    expect(bidRestriction({ id: "u1", status: "ACTIVA", roles: ["COMPRADOR"] }, "u2")).toBeNull();
+    expect(bidRestriction({ id: "u1", status: "ACTIVA", roles: ["COMPRADOR", "VENDEDOR"] }, "u2")).toBeNull();
+    expect(bidRestriction({ id: "u1", status: "ACTIVA", roles: ["COMPRADOR", "VENDEDOR"] }, "u1")).toContain("propio");
+    expect(bidRestriction(null)).not.toBeNull();
+    expect(bidRestriction({ id: "u1", status: "PENDIENTE", roles: ["COMPRADOR"] })).not.toBeNull();
   });
 });

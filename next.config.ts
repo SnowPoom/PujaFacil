@@ -5,6 +5,8 @@ const nextConfig: NextConfig = {
   /* config options here */
   cacheComponents: true,
   partialPrefetching: true,
+  // Conservar las pantallas compiladas durante el recorrido entre varios perfiles.
+  onDemandEntries: { maxInactiveAge: 30 * 60 * 1000, pagesBufferLength: 30 },
   // El loader de Tailwind implementa el contrato webpack. Usamos webpack también
   // en desarrollo para evitar el fallo de IPC de workers de Turbopack en Windows.
   webpack(config) {

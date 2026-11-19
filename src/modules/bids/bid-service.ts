@@ -1,3 +1,4 @@
+import { displayAlias } from "@/lib/aliases";
 import { randomBytes } from "node:crypto";
 import { Prisma, type AuctionStatus } from "@prisma/client";
 import { z } from "zod";
@@ -7,7 +8,7 @@ import { emitAuctionUpdated, type AuctionUpdatedPayload } from "@/lib/realtime";
 import { usdAmountSchema } from "@/modules/auctions/auction-schema";
 import { notifyUser } from "@/modules/notifications/notification-service";
 
-const FALLBACK_ALIAS = "Postor";
+const FALLBACK_ALIAS = "Usuario";
 
 export const placeBidSchema = z
   .object({
@@ -93,7 +94,7 @@ type LockedAuctionRow = {
 };
 
 function generateAliasCandidate(): string {
-  return `Postor-${randomBytes(3).toString("hex")}`;
+  return `Usuario-${randomBytes(3).toString("hex")}`;
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -103,7 +104,7 @@ function isUniqueViolation(error: unknown): boolean {
 type AliasClient = Pick<Prisma.TransactionClient, "auctionAlias">;
 
 /**
- * Obtiene o crea el seudónimo `AuctionAlias` único por usuario y subasta (`Postor-xxxxxx`)
+ * Obtiene o crea el seudónimo `AuctionAlias` único por usuario y subasta (`Usuario-xxxxxx`)
  * usando el cliente transaccional o global.
  */
 export async function ensureAuctionAliasInClient(
@@ -113,7 +114,7 @@ export async function ensureAuctionAliasInClient(
 ): Promise<string> {
   const where = { auctionId_userId: { auctionId, userId } };
   const existing = await client.auctionAlias.findUnique({ where, select: { alias: true } });
-  if (existing) return existing.alias;
+  if (existing) return displayAlias(existing.alias);
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
@@ -121,11 +122,11 @@ export async function ensureAuctionAliasInClient(
         data: { auctionId, userId, alias: generateAliasCandidate() },
         select: { alias: true },
       });
-      return created.alias;
+      return displayAlias(created.alias);
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
       const raced = await client.auctionAlias.findUnique({ where, select: { alias: true } });
-      if (raced) return raced.alias;
+      if (raced) return displayAlias(raced.alias);
     }
   }
   throw new Error("No se pudo generar un seudónimo único para la subasta.");
@@ -398,7 +399,7 @@ export async function getAuctionBids(auctionId: string): Promise<PublicAuctionBi
 
   const aliasMap = new Map<string, string>();
   for (const a of aliases) {
-    aliasMap.set(a.userId, a.alias);
+    aliasMap.set(a.userId, displayAlias(a.alias));
   }
 
   const startingPriceDec = new Prisma.Decimal(auction.startingPrice);
@@ -476,7 +477,7 @@ export async function getUserBids(buyerId: string): Promise<UserBidItem[]> {
       amount: new Prisma.Decimal(row.amount).toFixed(2),
       acceptedAt: row.acceptedAt.toISOString(),
       closesAt: row.auction.closesAt.toISOString(),
-      alias: row.auction.aliases[0]?.alias ?? FALLBACK_ALIAS,
+      alias: displayAlias(row.auction.aliases[0]?.alias ?? FALLBACK_ALIAS),
       isLeadingOrWinner,
     };
   });

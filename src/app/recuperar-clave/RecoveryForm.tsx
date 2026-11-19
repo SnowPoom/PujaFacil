@@ -33,7 +33,7 @@ export default function RecoveryForm({ token }: { token?: string }) {
     {!(message && resetting) && <form onSubmit={submit} className="space-y-4">
       <fieldset disabled={busy || (resetting && !token)} className="space-y-4">
         {resetting ? <>
-          <div><label htmlFor="newPassword" className="pf-label">Nueva contraseña (15 a 64 caracteres)</label><input id="newPassword" name="newPassword" type="password" autoComplete="new-password" minLength={15} maxLength={64} className="pf-input" required /></div>
+          <div><label htmlFor="newPassword" className="pf-label">Nueva contraseña</label><input id="newPassword" name="newPassword" type="password" autoComplete="new-password" minLength={15} maxLength={64} className="pf-input" required /></div>
           <div><label htmlFor="confirmation" className="pf-label">Confirmar contraseña</label><input id="confirmation" name="confirmation" type="password" autoComplete="new-password" minLength={15} maxLength={64} className="pf-input" required /></div>
         </> : <div><label htmlFor="email" className="pf-label">Correo electrónico</label><input id="email" name="email" type="email" autoComplete="email" maxLength={254} className="pf-input" required /></div>}
         <Button type="submit" disabled={busy || (resetting && !token)}>{busy ? "Procesando…" : resetting ? "Guardar nueva contraseña" : "Solicitar recuperación"}</Button>
